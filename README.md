@@ -16,6 +16,17 @@ $ npm-token
      ✓ /api/v4/projects/213/packages/npm/
 ```
 
+## 安装
+
+```bash
+go install github.com/hongmengchen/npm-token@latest
+# 或者
+git clone https://github.com/hongmengchen/npm-token && cd npm-token
+go build -trimpath -ldflags "-s -w" -o ~/.local/bin/npm-token .
+```
+
+需要 Go 1.24+；`~/.local/bin` 在 PATH 里即可直接运行 `npm-token`。
+
 ## 为什么需要它
 
 `.npmrc` 里的 token 是纯文本，坏了只会表现为 `npm install` 报 E401：
