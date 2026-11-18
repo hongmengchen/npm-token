@@ -9,31 +9,10 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hongmengchen/tui/theme"
 )
 
-var (
-	lAccent = lipgloss.AdaptiveColor{Light: "#334155", Dark: "#CBD5E1"}
-	lDim    = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#94A3B8"}
-	lText   = lipgloss.AdaptiveColor{Light: "#0F172A", Dark: "#E2E8F0"}
-	lGood   = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
-	lBad    = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
-	lWarn   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-	lLine   = lipgloss.AdaptiveColor{Light: "#E2E8F0", Dark: "#334155"}
-)
-
-var (
-	tuiTitle   = lipgloss.NewStyle().Bold(true).Foreground(lAccent)
-	tuiDim     = lipgloss.NewStyle().Foreground(lDim)
-	tuiText    = lipgloss.NewStyle().Foreground(lText)
-	tuiGood    = lipgloss.NewStyle().Foreground(lGood).Bold(true)
-	tuiBad     = lipgloss.NewStyle().Foreground(lBad)
-	tuiWarn    = lipgloss.NewStyle().Foreground(lWarn)
-	tuiAccent  = lipgloss.NewStyle().Foreground(lAccent)
-	tuiKey     = lipgloss.NewStyle().Foreground(lAccent).Bold(true)
-	tuiLabel   = lipgloss.NewStyle().Foreground(lDim).Width(9)
-	tuiCardOn  = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(lAccent).PaddingLeft(1)
-	tuiCardOff = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(lLine).PaddingLeft(1)
-)
+var styles = theme.Default
 
 type tuiState int
 
@@ -99,7 +78,7 @@ func newTuiModel(path string) tuiModel {
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = tuiAccent
+	sp.Style = styles.Accent
 
 	return tuiModel{path: path, state: tuiLoading, input: ti, spin: sp}
 }
@@ -351,20 +330,20 @@ func (m tuiModel) View() string {
 }
 
 func (m tuiModel) viewLoading() string {
-	return tuiTitle.Render("npm-token") + tuiDim.Render("  检查中") + "\n\n" +
-		"  " + m.spin.View() + "  " + tuiDim.Render("正在问 registry 这些 token 的状态…")
+	return styles.Title.Render("npm-token") + styles.Dim.Render("  检查中") + "\n\n" +
+		"  " + m.spin.View() + "  " + styles.Dim.Render("正在问 registry 这些 token 的状态…")
 }
 
 func (m tuiModel) viewList() string {
 	var b strings.Builder
-	b.WriteString(tuiTitle.Render("npm-token") + tuiDim.Render("  .npmrc 里的 registry token"))
+	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  .npmrc 里的 registry token"))
 	b.WriteString("\n")
 
 	authCount := 0
 	for _, it := range m.items {
 		authCount += len(it.Entries)
 	}
-	b.WriteString(tuiDim.Render(fmt.Sprintf("  %s · %d 条认证 · %d 个 token", displayPath(m.path), authCount, len(m.items))))
+	b.WriteString(styles.Dim.Render(fmt.Sprintf("  %s · %d 条认证 · %d 个 token", displayPath(m.path), authCount, len(m.items))))
 	b.WriteString("\n\n")
 
 	for i, it := range m.items {
@@ -372,11 +351,11 @@ func (m tuiModel) viewList() string {
 		b.WriteString("\n")
 	}
 	if len(m.items) == 0 {
-		b.WriteString("  " + tuiWarn.Render("没有可用的 token 条目") + "\n")
+		b.WriteString("  " + styles.Warn.Render("没有可用的 token 条目") + "\n")
 	}
 
 	if m.note != "" {
-		b.WriteString("\n  " + tuiAccent.Render(m.note) + "\n")
+		b.WriteString("\n  " + styles.Accent.Render(m.note) + "\n")
 	}
 
 	b.WriteString("\n")
@@ -388,11 +367,11 @@ func (m tuiModel) renderCard(it tokenItem, selected bool) string {
 	w := m.contentWidth()
 	label, style := tuiStatus(it.Rep)
 
-	head := tuiText.Render(it.Rep.Masked) + "   " + tuiDim.Render(kindLabel(it.Rep.Kind)) + "   " + style.Render(label)
+	head := styles.Text.Render(it.Rep.Masked) + "   " + styles.Dim.Render(kindLabel(it.Rep.Kind)) + "   " + style.Render(label)
 
 	meta := append([]string{}, it.Rep.Hosts...)
 	meta = append(meta, it.Rep.Details...)
-	metaLine := tuiDim.Render(truncate(strings.Join(meta, " · "), w))
+	metaLine := styles.Dim.Render(theme.Truncate(strings.Join(meta, " · "), w))
 
 	last := []string{}
 	if line := expiryLine(it.Rep); line != "" {
@@ -400,25 +379,25 @@ func (m tuiModel) renderCard(it tokenItem, selected bool) string {
 	}
 	last = append(last, entrySummary(it.Rep))
 
-	body := head + "\n" + metaLine + "\n" + tuiDim.Render(truncate(strings.Join(last, " · "), w))
+	body := head + "\n" + metaLine + "\n" + styles.Dim.Render(theme.Truncate(strings.Join(last, " · "), w))
 	if selected {
-		return tuiCardOn.Render(body)
+		return styles.CardOn.Render(body)
 	}
-	return tuiCardOff.Render(body)
+	return styles.CardOff.Render(body)
 }
 
 func (m tuiModel) viewInput() string {
 	var b strings.Builder
-	b.WriteString(tuiTitle.Render("npm-token") + tuiDim.Render("  换新 token"))
+	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  换新 token"))
 	b.WriteString("\n\n")
 	b.WriteString(m.selectedSummary())
 	b.WriteString("\n\n")
-	b.WriteString("  " + tuiDim.Render("新 token") + "\n")
+	b.WriteString("  " + styles.Dim.Render("新 token") + "\n")
 	b.WriteString("  " + m.input.View() + "\n\n")
 	if m.note != "" {
-		b.WriteString("  " + tuiAccent.Render(m.note) + "\n\n")
+		b.WriteString("  " + styles.Accent.Render(m.note) + "\n\n")
 	} else {
-		b.WriteString("  " + tuiDim.Render("粘贴后回车；也可以按 ctrl+y 从剪贴板读取") + "\n\n")
+		b.WriteString("  " + styles.Dim.Render("粘贴后回车；也可以按 ctrl+y 从剪贴板读取") + "\n\n")
 	}
 	b.WriteString(tuiHints("enter", "下一步", "ctrl+y", "读剪贴板", "esc", "返回"))
 	return b.String()
@@ -435,41 +414,41 @@ func (m tuiModel) viewConfirm() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(tuiTitle.Render("npm-token") + tuiDim.Render("  确认替换"))
+	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  确认替换"))
 	b.WriteString("\n\n")
-	b.WriteString("  " + tuiLabel.Render("文件") + tuiText.Render(displayPath(m.path)) + "\n")
-	b.WriteString("  " + tuiLabel.Render("主机") + tuiText.Render(strings.Join(it.Rep.Hosts, ", ")) + "\n")
-	b.WriteString("  " + tuiLabel.Render("旧") + tuiDim.Render(it.Rep.Masked) + "\n")
-	b.WriteString("  " + tuiLabel.Render("新") + tuiAccent.Render(maskToken(tok)) + "\n")
-	b.WriteString("  " + tuiLabel.Render("范围") + tuiText.Render(fmt.Sprintf("%d 条认证配置", writable)) + "\n")
+	b.WriteString("  " + styles.Label.Render("文件") + styles.Text.Render(displayPath(m.path)) + "\n")
+	b.WriteString("  " + styles.Label.Render("主机") + styles.Text.Render(strings.Join(it.Rep.Hosts, ", ")) + "\n")
+	b.WriteString("  " + styles.Label.Render("旧") + styles.Dim.Render(it.Rep.Masked) + "\n")
+	b.WriteString("  " + styles.Label.Render("新") + styles.Accent.Render(maskToken(tok)) + "\n")
+	b.WriteString("  " + styles.Label.Render("范围") + styles.Text.Render(fmt.Sprintf("%d 条认证配置", writable)) + "\n")
 	if skipped := len(it.Entries) - writable; skipped > 0 {
-		b.WriteString("  " + tuiLabel.Render("") + tuiDim.Render(fmt.Sprintf("另有 %d 条用环境变量，会跳过", skipped)) + "\n")
+		b.WriteString("  " + styles.Label.Render("") + styles.Dim.Render(fmt.Sprintf("另有 %d 条用环境变量，会跳过", skipped)) + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("  " + tuiDim.Render("会先备份成 "+displayPath(m.path)+".bak.<时间戳>，写入后联网复验") + "\n")
+	b.WriteString("  " + styles.Dim.Render("会先备份成 "+displayPath(m.path)+".bak.<时间戳>，写入后联网复验") + "\n")
 	b.WriteString("\n")
 	b.WriteString(tuiHints("enter", "写入并验证", "esc", "返回"))
 	return b.String()
 }
 
 func (m tuiModel) viewWorking() string {
-	return tuiTitle.Render("npm-token") + tuiDim.Render("  处理中") + "\n\n" +
-		"  " + m.spin.View() + "  " + tuiDim.Render("正在写入并验证新 token…")
+	return styles.Title.Render("npm-token") + styles.Dim.Render("  处理中") + "\n\n" +
+		"  " + m.spin.View() + "  " + styles.Dim.Render("正在写入并验证新 token…")
 }
 
 func (m tuiModel) viewResult() string {
 	var head string
 	switch {
 	case m.restored:
-		head = tuiBad.Render("✗ 新 token 被拒绝，已自动还原")
+		head = styles.Bad.Render("✗ 新 token 被拒绝，已自动还原")
 	case m.resultOK:
-		head = tuiGood.Render("✓ 已更新")
+		head = styles.Good.Render("✓ 已更新")
 	case m.wrote && m.failed == "":
-		head = tuiWarn.Render("! 已写入，但没能确认状态")
+		head = styles.Warn.Render("! 已写入，但没能确认状态")
 	case m.wrote:
-		head = tuiWarn.Render("! 已写入，但验证未通过")
+		head = styles.Warn.Render("! 已写入，但验证未通过")
 	default:
-		head = tuiBad.Render("✗ 替换失败")
+		head = styles.Bad.Render("✗ 替换失败")
 	}
 
 	writable := 0
@@ -480,33 +459,33 @@ func (m tuiModel) viewResult() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(tuiTitle.Render("npm-token") + "  " + head)
+	b.WriteString(styles.Title.Render("npm-token") + "  " + head)
 	b.WriteString("\n\n")
-	b.WriteString("  " + tuiLabel.Render("文件") + tuiText.Render(displayPath(m.path)) + "\n")
-	b.WriteString("  " + tuiLabel.Render("条目") + tuiText.Render(fmt.Sprintf("%d 条", writable)) + "\n")
+	b.WriteString("  " + styles.Label.Render("文件") + styles.Text.Render(displayPath(m.path)) + "\n")
+	b.WriteString("  " + styles.Label.Render("条目") + styles.Text.Render(fmt.Sprintf("%d 条", writable)) + "\n")
 	if m.skipped > 0 {
-		b.WriteString("  " + tuiLabel.Render("") + tuiDim.Render(fmt.Sprintf("跳过 %d 条环境变量条目", m.skipped)) + "\n")
+		b.WriteString("  " + styles.Label.Render("") + styles.Dim.Render(fmt.Sprintf("跳过 %d 条环境变量条目", m.skipped)) + "\n")
 	}
 	if m.backup != "" {
-		b.WriteString("  " + tuiLabel.Render("备份") + tuiDim.Render(displayPath(m.backup)) + "\n")
+		b.WriteString("  " + styles.Label.Render("备份") + styles.Dim.Render(displayPath(m.backup)) + "\n")
 	}
 	if m.failed != "" {
-		b.WriteString("  " + tuiLabel.Render("问题") + tuiBad.Render(m.failed) + "\n")
+		b.WriteString("  " + styles.Label.Render("问题") + styles.Bad.Render(m.failed) + "\n")
 	} else if m.restored {
 		reason := firstNonEmpty(m.verify.Error, m.verify.ExpiresIn)
 		if reason != "" {
-			b.WriteString("  " + tuiLabel.Render("原因") + tuiBad.Render(reason) + "\n")
+			b.WriteString("  " + styles.Label.Render("原因") + styles.Bad.Render(reason) + "\n")
 		}
-		b.WriteString("  " + tuiLabel.Render("") + tuiDim.Render("文件已恢复成原来的 token，可以换个新值再试") + "\n")
+		b.WriteString("  " + styles.Label.Render("") + styles.Dim.Render("文件已恢复成原来的 token，可以换个新值再试") + "\n")
 	} else if m.verify.Masked != "" {
 		label := "验证"
-		style := tuiGood
+		style := styles.Good
 		if m.verify.Valid == nil || !*m.verify.Valid {
-			label, style = "问题", tuiWarn
+			label, style = "问题", styles.Warn
 		}
-		b.WriteString("  " + tuiLabel.Render(label) + style.Render(firstNonEmpty(m.verify.ExpiresIn, m.verify.Error, "状态未知")) + "\n")
+		b.WriteString("  " + styles.Label.Render(label) + style.Render(firstNonEmpty(m.verify.ExpiresIn, m.verify.Error, "状态未知")) + "\n")
 		if m.backup != "" {
-			b.WriteString("\n  " + tuiDim.Render("要还原: cp "+displayPath(m.backup)+" "+displayPath(m.path)) + "\n")
+			b.WriteString("\n  " + styles.Dim.Render("要还原: cp "+displayPath(m.backup)+" "+displayPath(m.path)) + "\n")
 		}
 	}
 	b.WriteString("\n")
@@ -517,11 +496,11 @@ func (m tuiModel) viewResult() string {
 func (m tuiModel) selectedSummary() string {
 	label, style := tuiStatus(m.selected.Rep)
 	var b strings.Builder
-	b.WriteString("  " + tuiLabel.Render("文件") + tuiText.Render(displayPath(m.path)) + "\n")
-	b.WriteString("  " + tuiLabel.Render("token") + tuiText.Render(m.selected.Rep.Masked) +
-		"   " + tuiDim.Render(kindLabel(m.selected.Rep.Kind)) + "   " + style.Render(label) + "\n")
-	b.WriteString("  " + tuiLabel.Render("主机") + tuiText.Render(strings.Join(m.selected.Rep.Hosts, ", ")) + "\n")
-	b.WriteString("  " + tuiLabel.Render("条目") + tuiDim.Render(entrySummary(m.selected.Rep)))
+	b.WriteString("  " + styles.Label.Render("文件") + styles.Text.Render(displayPath(m.path)) + "\n")
+	b.WriteString("  " + styles.Label.Render("token") + styles.Text.Render(m.selected.Rep.Masked) +
+		"   " + styles.Dim.Render(kindLabel(m.selected.Rep.Kind)) + "   " + style.Render(label) + "\n")
+	b.WriteString("  " + styles.Label.Render("主机") + styles.Text.Render(strings.Join(m.selected.Rep.Hosts, ", ")) + "\n")
+	b.WriteString("  " + styles.Label.Render("条目") + styles.Dim.Render(entrySummary(m.selected.Rep)))
 	return b.String()
 }
 
@@ -539,37 +518,26 @@ func (m tuiModel) contentWidth() int {
 func tuiHints(pairs ...string) string {
 	var parts []string
 	for i := 0; i+1 < len(pairs); i += 2 {
-		parts = append(parts, tuiKey.Render(pairs[i])+tuiDim.Render(" "+pairs[i+1]))
+		parts = append(parts, styles.Key.Render(pairs[i])+styles.Dim.Render(" "+pairs[i+1]))
 	}
-	return "  " + strings.Join(parts, tuiDim.Render("  ·  "))
+	return "  " + strings.Join(parts, styles.Dim.Render("  ·  "))
 }
 
 func tuiStatus(r tokenReport) (string, lipgloss.Style) {
 	switch {
 	case r.Revoked:
-		return "✗ 已撤销", tuiBad
+		return "✗ 已撤销", styles.Bad
 	case r.Expired:
-		return "✗ 已过期", tuiBad
+		return "✗ 已过期", styles.Bad
 	case r.Valid != nil && !*r.Valid:
-		return "✗ 无效", tuiBad
+		return "✗ 无效", styles.Bad
 	case r.Valid != nil && *r.Valid && strings.Contains(r.ExpiresIn, "该换了"):
-		return "! 快到期了", tuiWarn
+		return "! 快到期了", styles.Warn
 	case r.Valid != nil && *r.Valid:
-		return "✓ 有效", tuiGood
+		return "✓ 有效", styles.Good
 	default:
-		return "? 判断不了", tuiWarn
+		return "? 判断不了", styles.Warn
 	}
-}
-
-func truncate(s string, w int) string {
-	if w <= 0 || lipgloss.Width(s) <= w {
-		return s
-	}
-	r := []rune(s)
-	for len(r) > 0 && lipgloss.Width(string(r)) > w-1 {
-		r = r[:len(r)-1]
-	}
-	return string(r) + "…"
 }
 
 func entrySummary(r tokenReport) string {

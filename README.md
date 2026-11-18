@@ -72,7 +72,7 @@ JWT 本地解 `exp`，npmjs 的 token 才走 `/-/whoami`。不依赖 `npm`，也
 
 ## 用法
 
-终端里直接运行 `npm-token` 会打开 TUI（管道 / CI 里则输出上面的纯文本）：
+终端里直接运行 `npm-token` 会打开 TUI（管道 / CI 里则输出上面的纯文本；界面样式来自共享的 [tui](https://github.com/hongmengchen/tui) 主题库）：
 
 ```
 npm-token  .npmrc 里的 registry token
