@@ -30,6 +30,9 @@ Windows（PowerShell）：
 irm https://raw.githubusercontent.com/hongmengchen/npm-token/main/install.ps1 | iex
 ```
 
+Windows 的 Git Bash / MSYS 里也能直接用上面的 `install.sh`（会装成 `npm-token.exe`）；
+想在 PowerShell / CMD 里也能用，优先选 `install.ps1`。
+
 其它方式：
 
 ```bash

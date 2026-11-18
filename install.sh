@@ -38,10 +38,12 @@ while [ $# -gt 0 ]; do
 done
 
 # ---- 系统与架构 ----
+# Git Bash / MSYS / Cygwin 里 uname -s 是 MINGW64_NT-… 这类值，按 Windows 处理
 os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 case "$os" in
   darwin|linux) ;;
-  *) die "只支持 macOS 和 Linux（Windows 请用 install.ps1）；当前系统: ${os:-未知}" ;;
+  mingw*|msys*|cygwin*|windows*) os=windows ;;
+  *) die "不支持的系统: ${os:-未知}（可去 https://github.com/$REPO/releases 手动下载）" ;;
 esac
 
 machine=$(uname -m 2>/dev/null)
@@ -52,6 +54,7 @@ case "$machine" in
 esac
 
 asset="${BIN}_${os}_${arch}"
+[ "$os" = "windows" ] && asset="${asset}.exe"
 
 if [ -n "$VERSION" ]; then
   case "$VERSION" in v*) ;; *) VERSION="v$VERSION" ;; esac
@@ -106,6 +109,7 @@ mkdir -p "$BIN_DIR" 2>/dev/null || die "无法创建目录 $BIN_DIR"
 [ -w "$BIN_DIR" ] || die "目录不可写: $BIN_DIR（用 -b 换一个，或用 sudo 重跑）"
 
 target="$BIN_DIR/$BIN"
+[ "$os" = "windows" ] && target="${target}.exe"
 if [ -e "$target" ] && [ ! -w "$target" ]; then
   die "$target 不可写，请用 sudo 或换一个 -b 目录"
 fi
@@ -120,7 +124,12 @@ case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *)
     printf '\n%s 不在 PATH 里，把它加进去（重开终端后生效）：\n' "$BIN_DIR"
-    printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.zshrc\n' "$BIN_DIR"
+    if [ "$os" = "windows" ]; then
+      printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.bashrc\n' "$BIN_DIR"
+      printf '（想在 PowerShell / CMD 里也能用，建议改用 install.ps1）\n'
+    else
+      printf '  echo '\''export PATH="%s:$PATH"'\'' >> ~/.zshrc\n' "$BIN_DIR"
+    fi
     ;;
 esac
 
