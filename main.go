@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -36,6 +36,8 @@ func run(args []string) int {
 		return runTUI(args)
 	case "set-token", "set":
 		return runSetToken(args)
+	case "skill":
+		return runSkill(args)
 	case "version", "-v", "--version":
 		fmt.Println("npm-token " + version)
 		return 0
@@ -58,6 +60,7 @@ func usage(w io.Writer) {
   npm-token check [--file PATH] [--json] [--no-color]
   npm-token set-token [--file PATH] [--host HOST | --project ID | --all]
                       [--token TOKEN | -] [--force] [--no-verify]
+  npm-token skill [--dir DIR] [--print]   把 agent skill 装到 ~/.claude/skills
   npm-token version
   npm-token help
 

@@ -98,6 +98,9 @@ echo '<新 token>' | npm-token set-token --host git.example.com
 # 只改某个项目、或多组 token 时明确指定
 npm-token set-token --project 192 --token <新 token>
 npm-token set-token --all --token <新 token>
+
+# 给 agent 装用法说明（升级时 hmck 会一起刷新）
+npm-token skill
 ```
 
 `set-token` 的行为：
@@ -125,6 +128,20 @@ npm-token set-token --all --token <新 token>
 - `check` 纯只读，不发写请求
 - 输出只露头尾（`glpat-…coco`），JSON 里也没有明文（`"token"` 字段是掩码）
 - 备份文件 0600，写在同目录，方便随时 `cp` 回去
+
+## Agent skill
+
+`npm-token skill` 会把 [`SKILL.md`](.claude/skills/npm-token/SKILL.md) 写到
+`~/.claude/skills/npm-token/SKILL.md`，agent 在新会话里就能看到这个工具的用法、退出码和
+「不要回显 token / 不要碰真实 .npmrc」这类约束。内容随二进制走，版本永远和程序一致：
+
+```bash
+npm-token skill            # 安装或更新
+npm-token skill --print    # 只看内容，不写文件
+npm-token skill --dir DIR  # 写到别的 skills 根目录
+```
+
+`hmck install npm-token` / `hmck upgrade npm-token` 装完会自动跑一次 `skill --quiet`。
 
 ## 开发
 
