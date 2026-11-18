@@ -175,3 +175,7 @@ go build -o npm-token .
 ```
 
 测试用 `httptest` 假 GitLab / registry，不依赖网络。
+
+## License
+
+本项目采用 [MIT](LICENSE) 协议，Copyright (c) 2026 chenliang。
