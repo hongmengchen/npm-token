@@ -1,5 +1,9 @@
 # npm-token
 
+[![CI](https://github.com/hongmengchen/npm-token/actions/workflows/ci.yml/badge.svg)](https://github.com/hongmengchen/npm-token/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hongmengchen/npm-token)](https://github.com/hongmengchen/npm-token/releases)
+[![License](https://img.shields.io/github/license/hongmengchen/npm-token)](LICENSE)
+
 检查并更新 `~/.npmrc` 里 registry 认证 token 的小工具：**还有效吗、什么时候到期、哪些条目真的能用、怎么换**。
 
 ```
@@ -41,12 +45,12 @@ go install github.com/hongmengchen/npm-token@latest
 
 或者从 [Releases](https://github.com/hongmengchen/npm-token/releases/latest) 直接下二进制。
 
-支持 macOS、Linux、Windows 的 amd64 / arm64（共 6 个单文件二进制，无运行时依赖）。安装脚本会校验 SHA-256；macOS/Linux 默认装到 `/usr/local/bin`（不可写则 `~/.local/bin`），Windows 装到 `%LOCALAPPDATA%\npm-token` 并加入用户 PATH。
+支持 macOS、Linux、Windows 的 amd64 / arm64（共 6 个单文件二进制，无运行时依赖）。安装脚本会校验 SHA-256；macOS/Linux 默认装到 `~/.local/bin`（root 下是 `/usr/local/bin`），Windows 装到 `%LOCALAPPDATA%\npm-token` 并加入用户 PATH。
 
 指定版本或目录：
 
 ```bash
-curl -fsSL .../install.sh | sh -s -- -v v0.1.0 -b ~/bin
+curl -fsSL .../install.sh | sh -s -- -v v0.4.0 -b ~/bin
 ```
 
 Windows 上 TUI 建议用 Windows Terminal；老式控制台对 Bubble Tea 的全屏渲染支持较差。
@@ -135,6 +139,7 @@ npm-token skill
 - `check` 纯只读，不发写请求
 - 输出只露头尾（`glpat-…coco`），JSON 里也没有明文（`"token"` 字段是掩码）
 - 备份文件 0600，写在同目录，方便随时 `cp` 回去
+- 安装和自更新都会校验 release 的 `checksums.txt`（SHA-256）
 
 ## 更新
 
@@ -170,11 +175,18 @@ npm-token skill --dir DIR  # 写到别的 skills 根目录
 只依赖 Go 标准库，Go 1.24+：
 
 ```bash
+gofmt -l .
+go vet ./...
 go test ./...
 go build -o npm-token .
 ```
 
-测试用 `httptest` 假 GitLab / registry，不依赖网络。
+测试用 `httptest` 假 GitLab / registry，不依赖网络。push / PR 会跑 CI，发版前也会先跑测试。
+
+## 参与
+
+- [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md)
+- 安全问题请按 [SECURITY](SECURITY.md) 走私密报告，不要公开贴真实 token 或 `.npmrc`
 
 ## License
 

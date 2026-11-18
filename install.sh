@@ -5,7 +5,7 @@
 #
 # 可选参数：
 #   -v, --version v0.1.0   装指定版本（默认最新）
-#   -b, --bindir DIR       装到指定目录（默认 /usr/local/bin，不可写则 ~/.local/bin）
+#   -b, --bindir DIR       装到指定目录（默认 ~/.local/bin；root 下默认 /usr/local/bin）
 set -eu
 
 REPO="hongmengchen/npm-token"
@@ -99,7 +99,7 @@ fi
 
 # ---- 安装位置 ----
 if [ -z "$BIN_DIR" ]; then
-  if [ -w /usr/local/bin ] 2>/dev/null; then
+  if [ "$(id -u)" = "0" ]; then
     BIN_DIR="/usr/local/bin"
   else
     BIN_DIR="$HOME/.local/bin"
