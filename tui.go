@@ -12,13 +12,13 @@ import (
 )
 
 var (
-	lAccent = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#A78BFA"}
-	lDim    = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#7C8794"}
-	lText   = lipgloss.AdaptiveColor{Light: "#111827", Dark: "#E5E7EB"}
+	lAccent = lipgloss.AdaptiveColor{Light: "#334155", Dark: "#CBD5E1"}
+	lDim    = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#94A3B8"}
+	lText   = lipgloss.AdaptiveColor{Light: "#0F172A", Dark: "#E2E8F0"}
 	lGood   = lipgloss.AdaptiveColor{Light: "#047857", Dark: "#34D399"}
 	lBad    = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
 	lWarn   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-	lLine   = lipgloss.AdaptiveColor{Light: "#E5E7EB", Dark: "#333A45"}
+	lLine   = lipgloss.AdaptiveColor{Light: "#E2E8F0", Dark: "#334155"}
 )
 
 var (
