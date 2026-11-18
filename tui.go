@@ -44,6 +44,13 @@ type tuiModel struct {
 	note   string
 	failed string
 
+	workText string
+
+	// 自身版本检查与升级
+	latest    string
+	checkErr  string
+	updatedTo string
+
 	selected tokenItem
 	skipped  int
 
@@ -70,6 +77,17 @@ type tuiApplyDoneMsg struct {
 	err      error
 }
 
+type versionCheckMsg struct {
+	latest string
+	err    error
+}
+
+type selfUpdateDoneMsg struct {
+	version string
+	changed bool
+	err     error
+}
+
 func newTuiModel(path string) tuiModel {
 	ti := textinput.New()
 	ti.Placeholder = "粘贴新的 token"
@@ -84,7 +102,39 @@ func newTuiModel(path string) tuiModel {
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, tuiLoadCmd(m.path))
+	return tea.Batch(m.spin.Tick, tuiLoadCmd(m.path), checkVersionCmd())
+}
+
+func checkVersionCmd() tea.Cmd {
+	return func() tea.Msg {
+		rel, err := fetchLatestRelease()
+		if err != nil {
+			return versionCheckMsg{err: err}
+		}
+		return versionCheckMsg{latest: rel.TagName}
+	}
+}
+
+func (m tuiModel) canUpdate() bool {
+	return m.updatedTo == "" && m.latest != "" && isNewer(m.latest, version)
+}
+
+// selfUpdateCmd 下载并替换当前可执行文件；替换后要重开程序才会用上新版本
+func selfUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		rel, err := fetchLatestRelease()
+		if err != nil {
+			return selfUpdateDoneMsg{err: err}
+		}
+		latest := strings.TrimPrefix(rel.TagName, "v")
+		if !isNewer(latest, version) {
+			return selfUpdateDoneMsg{version: latest}
+		}
+		if _, err := applyRelease(rel); err != nil {
+			return selfUpdateDoneMsg{err: err}
+		}
+		return selfUpdateDoneMsg{version: latest, changed: true}
+	}
 }
 
 func tuiLoadCmd(path string) tea.Cmd {
@@ -141,6 +191,29 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case versionCheckMsg:
+		if msg.err != nil {
+			m.checkErr = msg.err.Error()
+		} else {
+			m.latest = strings.TrimPrefix(msg.latest, "v")
+		}
+		return m, nil
+
+	case selfUpdateDoneMsg:
+		m.state = tuiList
+		if msg.err != nil {
+			m.note = "更新失败: " + msg.err.Error()
+			return m, nil
+		}
+		m.latest = msg.version
+		if msg.changed {
+			m.updatedTo = msg.version
+			m.note = ""
+		} else {
+			m.note = "已经是最新版本"
+		}
+		return m, nil
+
 	case tuiApplyDoneMsg:
 		m.state = tuiResult
 		m.backup = msg.backup
@@ -189,6 +262,13 @@ func (m tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state = tuiLoading
 			m.note = ""
 			return m, tea.Batch(m.spin.Tick, tuiLoadCmd(m.path))
+		case "U":
+			if m.canUpdate() {
+				m.note = ""
+				m.state = tuiWorking
+				m.workText = "正在更新到 " + m.latest + "…"
+				return m, tea.Batch(m.spin.Tick, selfUpdateCmd())
+			}
 		case "q", "esc":
 			return m, tea.Quit
 		}
@@ -233,6 +313,7 @@ func (m tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			tok := strings.TrimSpace(m.input.Value())
 			m.state = tuiWorking
+			m.workText = ""
 			return m, tea.Batch(m.spin.Tick, tuiApplyCmd(m.path, m.selected, tok))
 		}
 
@@ -330,13 +411,13 @@ func (m tuiModel) View() string {
 }
 
 func (m tuiModel) viewLoading() string {
-	return styles.Title.Render("npm-token") + styles.Dim.Render("  检查中") + "\n\n" +
+	return styles.Title.Render("npm-token") + styles.Dim.Render("  v"+version+"  检查中") + "\n\n" +
 		"  " + m.spin.View() + "  " + styles.Dim.Render("正在问 registry 这些 token 的状态…")
 }
 
 func (m tuiModel) viewList() string {
 	var b strings.Builder
-	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  .npmrc 里的 registry token"))
+	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  v"+version+"  .npmrc 里的 registry token"))
 	b.WriteString("\n")
 
 	authCount := 0
@@ -344,6 +425,7 @@ func (m tuiModel) viewList() string {
 		authCount += len(it.Entries)
 	}
 	b.WriteString(styles.Dim.Render(fmt.Sprintf("  %s · %d 条认证 · %d 个 token", displayPath(m.path), authCount, len(m.items))))
+	b.WriteString(m.updateStatus())
 	b.WriteString("\n\n")
 
 	for i, it := range m.items {
@@ -359,8 +441,29 @@ func (m tuiModel) viewList() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(tuiHints("↑↓", "选择", "enter", "换 token", "r", "重新检查", "q", "退出"))
+	hints := []string{"↑↓", "选择", "enter", "换 token", "r", "重新检查"}
+	if m.canUpdate() {
+		hints = append(hints, "U", "升级")
+	}
+	hints = append(hints, "q", "退出")
+	b.WriteString(tuiHints(hints...))
 	return b.String()
+}
+
+// updateStatus 显示当前版本之外的一小段状态：检查中 / 已是最新 / 可升级 / 已升级
+func (m tuiModel) updateStatus() string {
+	switch {
+	case m.updatedTo != "":
+		return styles.Good.Render("  ·  已更新到 " + m.updatedTo + "，重开生效")
+	case m.canUpdate():
+		return styles.Warn.Render("  ·  最新 " + m.latest + "，按 U 升级")
+	case m.latest != "":
+		return styles.Dim.Render("  ·  已是最新")
+	case m.checkErr != "":
+		return styles.Dim.Render("  ·  检查更新失败")
+	default:
+		return styles.Dim.Render("  ·  检查更新中…")
+	}
 }
 
 func (m tuiModel) renderCard(it tokenItem, selected bool) string {
@@ -432,8 +535,12 @@ func (m tuiModel) viewConfirm() string {
 }
 
 func (m tuiModel) viewWorking() string {
-	return styles.Title.Render("npm-token") + styles.Dim.Render("  处理中") + "\n\n" +
-		"  " + m.spin.View() + "  " + styles.Dim.Render("正在写入并验证新 token…")
+	text := m.workText
+	if text == "" {
+		text = "正在写入并验证新 token…"
+	}
+	return styles.Title.Render("npm-token") + styles.Dim.Render("  v"+version+"  处理中") + "\n\n" +
+		"  " + m.spin.View() + "  " + styles.Dim.Render(text)
 }
 
 func (m tuiModel) viewResult() string {

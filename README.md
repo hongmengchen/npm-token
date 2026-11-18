@@ -75,8 +75,8 @@ JWT 本地解 `exp`，npmjs 的 token 才走 `/-/whoami`。不依赖 `npm`，也
 终端里直接运行 `npm-token` 会打开 TUI（管道 / CI 里则输出上面的纯文本；界面样式来自共享的 [tui](https://github.com/hongmengchen/tui) 主题库）：
 
 ```
-npm-token  .npmrc 里的 registry token
-  ~/.npmrc · 6 条认证 · 1 个 token
+npm-token  v0.4.0  .npmrc 里的 registry token
+  ~/.npmrc · 6 条认证 · 1 个 token · 已是最新
 
 │ glpat-…coco   GitLab PAT   ✓ 有效
 │ git.example.com · scopes: api
@@ -87,6 +87,8 @@ npm-token  .npmrc 里的 registry token
 
 在 TUI 里：`↑↓` 选一组 token → `enter` → 粘贴新值（`ctrl+y` 读剪贴板）→ 确认 → 自动备份、写入、联网复验；新值被拒会当场还原，列表跟着刷新。
 
+标题栏始终显示当前版本，启动时会顺手查一下 GitHub 最新版。有新版本时状态行变成 `最新 0.4.1，按 U 升级`，按 `U` 就在界面里下载、校验 SHA-256 并原子替换自身，完成后提示重开生效——不用退出再去敲 `npm-token upgrade`。
+
 非交互场景：
 
 ```bash
@@ -94,6 +96,8 @@ npm-token check                    # 只读检查
 npm-token check --json             # 给脚本/agent 用
 npm-token check --file ./.npmrc    # 查别的文件
 npm-token tui --file ./.npmrc      # 指定文件进 TUI
+npm-token upgrade --check          # 只检查新版本
+npm-token upgrade                  # 升级自身
 
 # 换 token：从 stdin 读新值（推荐，避免留在 shell 历史里）
 echo '<新 token>' | npm-token set-token --host git.example.com
@@ -131,6 +135,21 @@ npm-token skill
 - `check` 纯只读，不发写请求
 - 输出只露头尾（`glpat-…coco`），JSON 里也没有明文（`"token"` 字段是掩码）
 - 备份文件 0600，写在同目录，方便随时 `cp` 回去
+
+## 更新
+
+```bash
+npm-token upgrade          # 更新到最新版本
+npm-token upgrade --check  # 只检查，不下载
+npm-token upgrade --force  # 版本相同也重新安装
+```
+
+去 GitHub Releases 查最新 tag，和当前版本比对；下载当前平台的二进制后，先用 release 里的
+`checksums.txt` 校验 SHA-256，再在可执行文件同目录写临时文件、原子替换，不会留下半截文件。
+装过 agent skill 的话，会用新二进制把 skill 一起刷新。安装目录需要提权时用
+`sudo npm-token upgrade`。
+
+TUI 里也一样：标题栏显示当前版本，有新版时按 `U` 直接升级。
 
 ## Agent skill
 

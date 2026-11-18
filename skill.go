@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -60,6 +61,15 @@ func skillInstalled(root string) bool {
 	}
 	_, err := os.Stat(skillFile(root))
 	return err == nil
+}
+
+// refreshSkillAfterUpgrade 升级后让「新的」二进制自己刷新 skill：
+// 老二进制里嵌的是旧说明，不能拿它写。
+func refreshSkillAfterUpgrade(exe string) {
+	if !skillInstalled("") {
+		return
+	}
+	_ = exec.Command(exe, "skill", "--quiet").Run()
 }
 
 // runSkill 实现 `npm-token skill`：默认写入/更新，--print 只输出内容

@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -38,6 +38,8 @@ func run(args []string) int {
 		return runSetToken(args)
 	case "skill":
 		return runSkill(args)
+	case "upgrade":
+		return runUpgrade(args)
 	case "version", "-v", "--version":
 		fmt.Println("npm-token " + version)
 		return 0
@@ -61,12 +63,14 @@ func usage(w io.Writer) {
   npm-token set-token [--file PATH] [--host HOST | --project ID | --all]
                       [--token TOKEN | -] [--force] [--no-verify]
   npm-token skill [--dir DIR] [--print]   把 agent skill 装到 ~/.claude/skills
+  npm-token upgrade [--check] [--force]   升级自身（--check 只看版本）
   npm-token version
   npm-token help
 
 TUI:
   ↑↓ 选 token，enter 换新值，r 重新检查，q 退出。粘贴后回车确认，
   写入前自动备份，写完联网复验；新 token 被拒会自动还原。
+  标题栏显示当前版本；有新版时按 U 直接升级（升级完重开生效）。
 
 check:
   读出 .npmrc 里所有 //host/path/:_authToken 条目，按 token 分组，尽量联网问出

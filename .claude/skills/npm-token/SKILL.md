@@ -5,7 +5,7 @@ description: 检查并更新 ~/.npmrc 里的 registry token（GitLab / npmjs 私
 
 # npm-token
 
-`npm-token` 是这台机器上的 TUI 程序（也能当纯 CLI 用）：读出 `.npmrc` 里所有
+`npm-token` 是这台机器上的 TUI 程序（也能当纯 CLI 用，TUI 标题栏会显示版本、有新版可按 `U` 升级）：读出 `.npmrc` 里所有
 `//host/path/:_authToken=...` 条目，按 token 分组检查是否有效、什么时候过期，换新值时
 先备份、原子写入、写完联网复验，新值被明确拒绝就自动还原。
 
@@ -104,6 +104,13 @@ curl -fsSL https://raw.githubusercontent.com/hongmengchen/npm-token/main/install
 ```
 
 Windows PowerShell：`irm https://raw.githubusercontent.com/hongmengchen/npm-token/main/install.ps1 | iex`
+
+自己升级（非 TTY 输出纯文本，适合脚本）：
+
+```bash
+npm-token upgrade --check   # 只检查新版本
+npm-token upgrade           # 下载、校验 SHA-256、原子替换自身
+```
 
 用 hmck 统一管理时：
 
