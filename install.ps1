@@ -4,7 +4,7 @@
 #
 # 可选参数：
 #   -Version v0.1.0   装指定版本（默认最新）
-#   -BinDir C:\path   装到指定目录（默认 %LOCALAPPDATA%\npm-token）
+#   -BinDir C:\path   装到指定目录（默认 %USERPROFILE%\.local\bin，和 hmck、kube-token 相同）
 param(
     [string]$Version = "",
     [string]$BinDir = ""
@@ -67,7 +67,7 @@ try {
 Remove-Item -Force $sums -ErrorAction SilentlyContinue
 
 if (-not $BinDir) {
-    $BinDir = Join-Path $env:LOCALAPPDATA "npm-token"
+    $BinDir = Join-Path $HOME ".local\bin"
 }
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
@@ -81,13 +81,25 @@ try {
 
 Write-Host "已安装: $target"
 
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (($userPath -split ";") -notcontains $BinDir) {
-    $newPath = if ([string]::IsNullOrEmpty($userPath)) { $BinDir } else { $userPath.TrimEnd(";") + ";" + $BinDir }
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-    Write-Host "已把 $BinDir 加到用户 PATH（新开终端生效）"
+# 旧版装在 %LOCALAPPDATA%\npm-token：清掉旧副本，PATH 里也只留统一目录
+$legacyDir = ""
+if ($env:LOCALAPPDATA) { $legacyDir = (Join-Path $env:LOCALAPPDATA "npm-token").TrimEnd("\") }
+if ($legacyDir -and $legacyDir -ne $BinDir.TrimEnd("\")) {
+    Remove-Item -Force -LiteralPath (Join-Path $legacyDir "$bin.exe") -ErrorAction SilentlyContinue
+    Remove-Item -Force -LiteralPath $legacyDir -ErrorAction SilentlyContinue
 }
-$env:Path = $env:Path.TrimEnd(";") + ";" + $BinDir
+
+# 用户 PATH：统一目录放最前面；旧目录去掉
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$parts = @()
+if ($userPath) { $parts = @($userPath -split ";" | Where-Object { $_.Trim() -ne "" }) }
+$keep = @($parts | Where-Object { $_.TrimEnd("\") -ne $BinDir.TrimEnd("\") -and $_.TrimEnd("\") -ne $legacyDir })
+$newPath = (@($BinDir) + $keep) -join ";"
+if ($newPath -ne $userPath) {
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Host "已把 $BinDir 放到用户 PATH 最前面（新开终端生效）"
+}
+$env:Path = $BinDir + ";" + $env:Path
 
 try { & $target version } catch { }
 

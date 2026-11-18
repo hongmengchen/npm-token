@@ -45,7 +45,7 @@ go install github.com/hongmengchen/npm-token@latest
 
 或者从 [Releases](https://github.com/hongmengchen/npm-token/releases/latest) 直接下二进制。
 
-支持 macOS、Linux、Windows 的 amd64 / arm64（共 6 个单文件二进制，无运行时依赖）。安装脚本会校验 SHA-256；macOS/Linux 默认装到 `~/.local/bin`（root 下是 `/usr/local/bin`），Windows 装到 `%LOCALAPPDATA%\npm-token` 并加入用户 PATH。
+支持 macOS、Linux、Windows 的 amd64 / arm64（共 6 个单文件二进制，无运行时依赖）。安装脚本会校验 SHA-256；默认装到 `~/.local/bin`（root 下是 `/usr/local/bin`），Windows 装到 `%USERPROFILE%\.local\bin`（Git Bash 里就是 `~/.local/bin`），和其他 hmck 管理的工具同一个目录，并加入用户 PATH。
 
 指定版本或目录：
 
