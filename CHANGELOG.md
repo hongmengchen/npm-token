@@ -2,6 +2,13 @@
 
 更早的版本见 [GitHub Releases](https://github.com/hongmengchen/npm-token/releases)。
 
+## [0.5.0] - 2026-11-18
+
+### 新增
+
+- npm-token 有了自己的标志：`docs/logo.svg`（方框 + 里面一颗小方块）
+- TUI 左上角用纯文字画出同系列的招牌（方框 + N），标题、统计和更新状态排在它右边；不依赖图片、字体或终端图形支持
+
 ## [0.4.1] - 2026-11-18
 
 ### 变更

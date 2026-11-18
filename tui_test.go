@@ -5,9 +5,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// 列表页左边有招牌，和 docs/logo.svg 同一套方框 + N
+func TestListViewShowsLogo(t *testing.T) {
+	m := tuiModel{
+		path: "/tmp/.npmrc", width: 100,
+		items: []tokenItem{{Rep: tokenReport{
+			Masked: "glpat-…abcd", Kind: "gitlab-pat", Hosts: []string{"git.example.com"},
+		}}},
+	}
+	got := ansiEscape.ReplaceAllString(m.viewList(), "")
+	for _, want := range []string{"┌───┐", "│ N │", "└───┘"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("列表页缺招牌 %q:\n%s", want, got)
+		}
+	}
+	if first := strings.SplitN(got, "\n", 2)[0]; !strings.Contains(first, "┌───┐") || !strings.Contains(first, "npm-token") {
+		t.Errorf("第一行应是招牌 + 标题，got %q", first)
+	}
+}
 
 func fakeGitLab(t *testing.T) *httptest.Server {
 	t.Helper()

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-labelledby="npm-token-title">
+  <title id="npm-token-title">npm-token</title>
+  <rect width="128" height="128" rx="28" fill="#0F172A"/>
+  <rect x="27" y="27" width="74" height="74" rx="14" fill="none" stroke="#CBD5E1" stroke-width="4"/>
+  <rect x="52" y="52" width="24" height="24" rx="4" fill="#F87171"/>
+</svg>

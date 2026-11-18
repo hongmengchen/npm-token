@@ -1,5 +1,8 @@
 # npm-token
 
+<p align="center"><img src="docs/logo.svg" width="96" height="96" alt="npm-token 标志"></p>
+<p align="center">方框是 `.npmrc`，里面那颗小方块是它守着的 token。</p>
+
 [![CI](https://github.com/hongmengchen/npm-token/actions/workflows/ci.yml/badge.svg)](https://github.com/hongmengchen/npm-token/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/hongmengchen/npm-token)](https://github.com/hongmengchen/npm-token/releases)
 [![License](https://img.shields.io/github/license/hongmengchen/npm-token)](LICENSE)
@@ -8,16 +11,15 @@
 
 ```
 $ npm-token
-~/.npmrc
-6 条认证配置 · 1 个 token · 3 个 registry 映射
+┌───┐  npm-token  v0.5.0  .npmrc 里的 registry token
+│ N │  ~/.npmrc · 6 条认证 · 1 个 token  ·  已是最新
+└───┘
 
-✓ glpat-…coco  GitLab PAT  有效
-   git.example.com · 名称「ci」 · scopes: api · 最近使用 2026-11-18 14:56
-   2027-03-31 到期（剩 133 天）
-   条目
-     ✓ /api/v4/packages/npm/
-     ✓ /api/v4/projects/192/packages/npm/
-     ✓ /api/v4/projects/213/packages/npm/
+│ glpat-…coco   GitLab PAT   ✓ 有效
+│ git.example.com · 名称「ci」 · scopes: api · 最近使用 2026-11-18 14:56
+│ 2027-03-31 到期（剩 133 天） · 6 个条目全部可访问
+
+  ↑↓ 选择  ·  enter 换 token  ·  r 重新检查  ·  q 退出
 ```
 
 ## 安装

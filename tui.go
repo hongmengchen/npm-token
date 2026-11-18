@@ -415,18 +415,39 @@ func (m tuiModel) viewLoading() string {
 		"  " + m.spin.View() + "  " + styles.Dim.Render("正在问 registry 这些 token 的状态…")
 }
 
+// logoLines 是终端里的招牌，和 docs/logo.svg 同一套几何：方框里一个 N（npm）
+var logoLines = []string{
+	"┌───┐",
+	"│ N │",
+	"└───┘",
+}
+
+// withLogo 把 logo 摆在左边，右边逐行接上文字
+func (m tuiModel) withLogo(lines ...string) string {
+	var b strings.Builder
+	for i, l := range logoLines {
+		b.WriteString(styles.Accent.Render(l))
+		if i < len(lines) && lines[i] != "" {
+			b.WriteString("  " + lines[i])
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (m tuiModel) viewList() string {
 	var b strings.Builder
-	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  v"+version+"  .npmrc 里的 registry token"))
-	b.WriteString("\n")
 
 	authCount := 0
 	for _, it := range m.items {
 		authCount += len(it.Entries)
 	}
-	b.WriteString(styles.Dim.Render(fmt.Sprintf("  %s · %d 条认证 · %d 个 token", displayPath(m.path), authCount, len(m.items))))
-	b.WriteString(m.updateStatus())
-	b.WriteString("\n\n")
+	stats := styles.Dim.Render(fmt.Sprintf("%s · %d 条认证 · %d 个 token", displayPath(m.path), authCount, len(m.items)))
+	b.WriteString(m.withLogo(
+		styles.Title.Render("npm-token")+styles.Dim.Render("  v"+version+"  .npmrc 里的 registry token"),
+		stats+m.updateStatus(),
+	))
+	b.WriteString("\n")
 
 	for i, it := range m.items {
 		b.WriteString(m.renderCard(it, i == m.cursor))

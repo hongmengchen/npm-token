@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.4.1"
+var version = "0.5.0"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
