@@ -18,14 +18,35 @@ $ npm-token
 
 ## 安装
 
+macOS / Linux：
+
 ```bash
-go install github.com/hongmengchen/npm-token@latest
-# 或者
-git clone https://github.com/hongmengchen/npm-token && cd npm-token
-go build -trimpath -ldflags "-s -w" -o ~/.local/bin/npm-token .
+curl -fsSL https://raw.githubusercontent.com/hongmengchen/npm-token/main/install.sh | sh
 ```
 
-需要 Go 1.24+；`~/.local/bin` 在 PATH 里即可直接运行 `npm-token`。
+Windows（PowerShell）：
+
+```powershell
+irm https://raw.githubusercontent.com/hongmengchen/npm-token/main/install.ps1 | iex
+```
+
+其它方式：
+
+```bash
+go install github.com/hongmengchen/npm-token@latest
+```
+
+或者从 [Releases](https://github.com/hongmengchen/npm-token/releases/latest) 直接下二进制。
+
+支持 macOS、Linux、Windows 的 amd64 / arm64（共 6 个单文件二进制，无运行时依赖）。安装脚本会校验 SHA-256；macOS/Linux 默认装到 `/usr/local/bin`（不可写则 `~/.local/bin`），Windows 装到 `%LOCALAPPDATA%\npm-token` 并加入用户 PATH。
+
+指定版本或目录：
+
+```bash
+curl -fsSL .../install.sh | sh -s -- -v v0.1.0 -b ~/bin
+```
+
+Windows 上 TUI 建议用 Windows Terminal；老式控制台对 Bubble Tea 的全屏渲染支持较差。
 
 ## 为什么需要它
 
