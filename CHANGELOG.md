@@ -2,6 +2,20 @@
 
 更早的版本见 [GitHub Releases](https://github.com/hongmengchen/npm-token/releases)。
 
+## [0.7.0] - 2026-11-19
+
+### 新增
+
+- `npm-token auto on|off|status`：自动换新开关。开启前逐组确认 token 真的能自我轮换（GitLab PAT、未失效、带 `api` / `self_rotate` scope、条目是 `_authToken` 字面值），有一组不行就拒绝并列出原因——包括去 GitLab 建 token 时该勾哪个 scope
+- 开关打开后，`refresh` 不带参数也按保存的阈值和文件走，直接放进定时任务；`refresh` 不指定 `--host` / `--project` 时会遍历文件里所有组，换不了的（npmjs、JWT 等）跳过并说明，不影响其它组
+- TUI 启动时若开关打开且某组 token 已进阈值，会直接换新（只换一组，不弹确认页）；`a` 键在 TUI 里开关自动换新，标题行显示开关状态和阈值
+- 开关状态存在本机配置里（macOS `~/Library/Application Support/npm-token/config.json`，Linux `~/.config/npm-token/config.json`），0600，只放开关、阈值和文件路径，没有任何 token
+
+### 变更
+
+- TUI 里 `R` 的提示改成「现在换新」，和自动开关区分开
+- 已知 `scopes` 但不够轮换时，`rotate` / `refresh` 在调接口之前就给出同样的 scope 提示（`--dry-run` 也不会白联网）
+
 ## [0.6.0] - 2026-11-19
 
 ### 新增

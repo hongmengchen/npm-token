@@ -11,7 +11,7 @@
 
 ```
 $ npm-token
-┌───┐  npm-token  v0.6.0  .npmrc 里的 registry token
+┌───┐  npm-token  v0.7.0  .npmrc 里的 registry token
 │ N │  ~/.npmrc · 1 个 token · 3 条配置  ·  已是最新
 └───┘
 
@@ -19,7 +19,7 @@ $ npm-token
 │ git.example.com · 名称「ci」 · scopes: api · 最近使用 2026-11-18 14:56
 │ 2027-03-31 到期（剩 133 天） · 6 个条目全部可访问
 
-  ↑↓ 选择  ·  enter 换 token  ·  R 自动换新  ·  e 看条目  ·  r 检查  ·  q 退出
+  ↑↓ 选择  ·  enter 换 token  ·  R 现在换新  ·  a 自动开关  ·  e 看条目  ·  r 检查  ·  q 退出
 ```
 
 ## 安装
@@ -81,18 +81,19 @@ JWT 本地解 `exp`，npmjs 的 token 才走 `/-/whoami`。不依赖 `npm`，也
 终端里直接运行 `npm-token` 会打开 TUI（管道 / CI 里则输出上面的纯文本；界面样式来自共享的 [tui](https://github.com/hongmengchen/tui) 主题库）：
 
 ```
-npm-token  v0.6.0  .npmrc 里的 registry token
+npm-token  v0.7.0  .npmrc 里的 registry token
   ~/.npmrc · 1 个 token · 3 条配置 · 已是最新
 
 │ glpat-…coco   GitLab PAT   ✓ 有效
 │ git.example.com · scopes: api
 │ 2027-03-31 到期（剩 133 天） · 6 个条目全部可访问
 
-  ↑↓ 选择  ·  enter 换 token  ·  R 自动换新  ·  e 看条目  ·  r 检查  ·  q 退出
+  ↑↓ 选择  ·  enter 换 token  ·  R 现在换新  ·  a 自动开关  ·  e 看条目  ·  r 检查  ·  q 退出
 ```
 
 在 TUI 里：`↑↓` 选一组 token → `enter` → 粘贴新值（`ctrl+y` 读剪贴板）→ 确认 → 自动备份、写入、联网复验；新值被拒会当场还原，列表跟着刷新。
 按 `R` 走另一条路：让 GitLab 自己换一个新 token，先出确认页，回车才动手。
+按 `a` 开关自动换新：开启前先逐组确认这些 token 真能自我轮换，有一组不行就说明原因、不开；开启后每次启动 TUI，若有 token 已进阈值就直接换（只换一组，不弹确认页）。标题行显示「自动换新开（≤30 天）」或「自动换新关」。
 按 `e` 看 `.npmrc` 的全部 `key=value` 条目（带行号、可翻页，敏感值已打码）。
 
 标题栏始终显示当前版本，启动时会顺手查一下 GitHub 最新版。有新版本时状态行变成 `最新 0.4.1，按 U 升级`，按 `U` 就在界面里下载、校验 SHA-256 并原子替换自身，完成后提示重开生效——不用退出再去敲 `npm-token upgrade`。
@@ -113,6 +114,12 @@ npm-token rotate                   # 换，并沿用原 token 的有效期
 npm-token rotate --expires-at 2027-03-31
 npm-token refresh                  # 只剩 30 天以内才换，否则什么都不做
 
+# 自动换新开关（存本机配置，不含 token）
+npm-token auto status              # 看开关、阈值、管的是哪个文件
+npm-token auto on                  # 开启前先确认每组 token 都能自我轮换
+npm-token auto on --if-days 15     # 顺便把阈值改成 15 天
+npm-token auto off                 # 关掉（阈值和文件路径保留）
+
 # 换 token：从 stdin 读新值（推荐，避免留在 shell 历史里）
 echo '<新 token>' | npm-token set-token --host git.example.com
 
@@ -131,7 +138,7 @@ npm-token skill
 3. 写完**联网复验**：被明确拒绝（401/403）就**自动还原**，并给出原因；只是网络不通则保留写入并提示备份位置
 4. 值是 `${VAR}` 的条目默认跳过（改环境变量更合适），要硬改加 `--force`
 
-退出码：`0` 全部有效 / 换新成功 / 不需要换 · `1` 有 token 失效或过期，或换完的新 token 被 GitLab 拒绝 · `2` 用法错误 / 网络不通 / 没有条目 / 换新失败（旧 token 未被撤销）。
+退出码：`0` 全部有效 / 换新成功 / 不需要换 · `1` 有 token 失效或过期，或换完的新 token 被 GitLab 拒绝 · `2` 用法错误 / 网络不通 / 没有条目 / 换新失败（旧 token 未被撤销）/ `auto on` 时有 token 不能自动换新 / `refresh` 有组被跳过。
 
 ### 自动换新（rotate / refresh）
 
@@ -151,6 +158,46 @@ npm-token refresh                      # 剩 30 天以内才换（--if-days 改�
 - 只有 GitLab PAT 能这样换：npmjs 的 token 要求交互式 2FA，工具没法在后台刷新；JWT 由签发方续期。
 - 换新后新值先写进同目录的 `.npm-token-recovery-*`（0600），再改 `.npmrc`；复验通过自动删除，没通过会留在那儿并告诉你路径——旧 token 已经死了，这时要么修网络，要么手动把恢复文件里的值写进去。
 - `--json` 输出只有掩码，永远不带新 token；脚本可以用 `--no-verify` 跳过复验（离线时），退出码含义不变。
+
+### 自动换新开关（auto）
+
+`rotate` / `refresh` 是「现在就换」，`auto` 是「以后自动换」：把开关和阈值存进本机配置，TUI 启动和定时任务都照它走。
+
+```bash
+npm-token auto status          # 开关、阈值、管的文件（--json 给脚本）
+npm-token auto on              # 开启
+npm-token auto off             # 关闭（阈值和文件保留，下次 on 不用重填）
+```
+
+`auto on` 不是记住一个布尔值就完事，它会**先逐组把文件里的 token 查一遍**，确认真的能自我轮换：
+
+- 必须是 GitLab PAT（`glpat-`）且状态 `active`
+- 接口报告的 `scopes` 里要有 `api` 或 `self_rotate`；拿不到 `scopes` 也算不确认，同样拒绝
+- 条目得是 `_authToken=` 的字面值，不是 `${VAR}` 之类
+
+有一组不满足就整条拒绝、退出码 2，并列出是哪一组、缺什么。**缺 scope 时直接告诉你建 token 时该勾哪个**：
+
+```
+不能开启自动换新：下面这些 token 没法在后台刷新
+
+  ✗  glpat-…read
+     缺 api / self_rotate scope：去 GitLab 头像 → Preferences → Access tokens → Add new token，
+     勾选 `api`（或 `self_rotate`），再用 npm-token set-token 写入（自我轮换要 GitLab 16.10 以上）
+
+修好后重新跑 npm-token auto on。
+```
+
+开关打开后：
+
+- `npm-token refresh` 不带 `--file` / `--if-days` 时，按配置里保存的文件和阈值走，**定时任务里直接写 `npm-token refresh` 就行**（显式传参仍然优先）；
+- 不指定 `--host` / `--project` 时，`refresh` 会遍历文件里**所有** token 组：能换的换，换不了的（npmjs、JWT 等）跳到 stderr 说明，不影响其它组；有组被跳过时退出码 2；
+- TUI 启动时若开关打开、且当前文件就是配置里那个文件，某组 token 已进阈值就直接换新（一次启动只换一组，剩下的交给下次启动或定时 `refresh`）；
+- 开关状态存在本机配置文件里，0600，**只放开关、阈值和文件路径，没有任何 token**：
+  - macOS：`~/Library/Application Support/npm-token/config.json`
+  - Linux：`~/.config/npm-token/config.json`
+  - Windows：`%AppData%\npm-token\config.json`
+
+`auto` 只管 GitLab PAT：npmjs 的 token 换不了（要交互式 2FA），JWT 由签发方续期，这两类永远开不了自动换新，`auto on` 会直说原因。
 
 ### 看 `.npmrc` 里的其它条目
 
@@ -179,6 +226,7 @@ npm-token refresh                      # 剩 30 天以内才换（--if-days 改�
 - 输出只露头尾（`glpat-…coco`），JSON 里也没有明文（`"token"` 字段是掩码）；`rotate --json` 同样不含新 token
 - `.npmrc` 条目视图里敏感值在解析阶段就打码，渲染层拿不到明文
 - 备份文件和换新用的恢复文件都是 0600，写在同目录，方便随时 `cp` 回去
+- 自动换新开关的配置文件同样是 0600，里面只有开关、阈值和 `.npmrc` 路径，不含任何 token；`auto on` 校验不通过时不会写这个文件
 - 安装和自更新都会校验 release 的 `checksums.txt`（SHA-256）
 
 ## 更新

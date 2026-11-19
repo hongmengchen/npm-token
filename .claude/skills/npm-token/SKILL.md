@@ -8,7 +8,7 @@ description: 检查并更新 ~/.npmrc 里的 registry token（GitLab / npmjs 私
 `npm-token` 是这台机器上的 TUI 程序（也能当纯 CLI 用，TUI 标题栏会显示版本、有新版可按 `U` 升级）：读出 `.npmrc` 里所有
 `//host/path/:_authToken=...` 条目，按 token 分组检查是否有效、什么时候过期，换新值时
 先备份、原子写入、写完联网复验，新值被明确拒绝就自动还原。GitLab PAT 还能让 GitLab
-自己轮换出新值（`rotate` / `refresh`）。除 token 行外，文件里所有 `key=value` 也能列出来看。
+自己轮换出新值（`rotate` / `refresh`），也能用 `auto` 开关把「到期前自动换」存成本机配置。除 token 行外，文件里所有 `key=value` 也能列出来看。
 
 **agent 一律走 CLI，不要启动 TUI。** TUI 需要真终端（选条目、粘贴 token），非 TTY 里跑不起来。
 
@@ -92,7 +92,7 @@ npm-token set-token --project 123 --token "$NEW_TOKEN"
 | --- | --- | --- |
 | `0` | 写入并复验通过（`set-token`）/ 全部有效（`check`）/ 换新成功或不需要换（`rotate`） | 报结果 |
 | `1` | 有 token 失效或过期（`check`）；rotate 换完但新 token 被 GitLab 拒绝 | 看输出，建议换新值 / 看恢复文件 |
-| `2` | 用法错误、网络不通、没有条目；写入被拒时会自动还原；rotate 失败（旧 token 未被撤销） | 看 stderr |
+| `2` | 用法错误、网络不通、没有条目；写入被拒时会自动还原；rotate 失败（旧 token 未被撤销）；`auto on` 时有 token 不能自动换新；`refresh` 有组被跳过 | 看 stderr |
 
 成功时 stdout 形如：
 
@@ -137,9 +137,41 @@ npm-token refresh               # 剩 30 天以内才换（--if-days 改阈值�
 - 不给 `--expires-at` / `--days` 时沿用原 token 的有效期；原 token 永不过期就不设到期。
 - 新值先写进同目录 `.npm-token-recovery-*`（0600），复验通过才删；失败时输出会给出恢复文件路径，**不要自作主张删它**，也不要回滚到已死的旧 token。
 - npmjs token 不能这样刷新（接口要求交互式 2FA，`bypass_2fa` token 被禁）；JWT 由签发方续期。
-- 退出码：`0` 换成功 / 不需要换；`1` 换完但新 token 被 GitLab 拒绝；`2` 换新失败（旧 token 未被撤销，文件没动）。
+- 退出码：`0` 换成功 / 不需要换；`1` 换完但新 token 被 GitLab 拒绝；`2` 换新失败（旧 token 未被撤销，文件没动）/ 没指定组时有组被跳过。
 
-## 4. 安装与升级
+## 4. 自动换新开关（auto）
+
+用户想「以后到期前自动换」而不是每次手动 `rotate` 时用它。配置存在
+`os.UserConfigDir()/npm-token/config.json`（macOS `~/Library/Application Support/npm-token/config.json`），
+0600，只放开关、阈值、`.npmrc` 路径，**没有任何 token**。
+
+```bash
+npm-token auto                 # 同 auto status：开关、阈值、管的文件、每组能不能换
+npm-token auto status --json   # 给脚本：enabled / if_days / file / config / tokens[].refreshable / problems
+npm-token auto on              # 开启前逐组校验，有不能换的就拒绝（退出 2）
+npm-token auto on --if-days 15 # 顺便改阈值（1–3650）
+npm-token auto off             # 关闭；阈值和文件保留，下次 on 不用重填
+```
+
+`auto on` 的校验（不通过就整条拒绝、退出 2、**不写配置**）：
+
+- 必须是 `glpat-` GitLab PAT 且 `active`；
+- 接口报告的 `scopes` 要有 `api` 或 `self_rotate`（GitLab 16.10+）；
+- 拿不到 `scopes` 也拒绝——开关的承诺是「到期前一定换得掉」；
+- 条目必须是 `_authToken` 字面值，`${VAR}` 不行。
+
+拒绝时输出会点名是哪组、缺什么。**缺 scope 的提示必须原样转告用户**：去 GitLab 头像 →
+Preferences → Access tokens → Add new token，勾选 `api`（或 `self_rotate`），用
+`set-token` 换进 `.npmrc` 后重新 `auto on`。npmjs token 和 JWT 永远开不了自动换新，直说原因即可。
+
+开关打开后的行为：
+
+- `npm-token refresh` 不带 `--file` / `--if-days` 时按保存的值走，**定时任务里写 `npm-token refresh` 就行**；显式传参优先；
+- `refresh` 没给 `--host` / `--project` 时遍历文件里所有组：换不了的组写到 stderr 跳过，其它组照换；有跳过就退出 2；
+- TUI 启动时（开关指向当前文件）对已进阈值的一组自动换新，一次只换一组；
+- agent 不要替用户擅自 `auto on`：换新会让旧 token 立刻作废，先问清楚再开。
+
+## 5. 安装与升级
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hongmengchen/npm-token/main/install.sh | sh
@@ -161,12 +193,12 @@ hmck install npm-token
 hmck upgrade npm-token
 ```
 
-## 5. agent 自己的 skill 文件
+## 6. agent 自己的 skill 文件
 
 `npm-token skill` 会把本文件写到 `~/.claude/skills/npm-token/SKILL.md`，内容跟程序版本一致；
 升级 npm-token 时 hmck 会带着刷新。`npm-token skill --print` 只打印不写文件。
 
-## 6. 在本仓库里改代码时
+## 7. 在本仓库里改代码时
 
 - 版本号在 `main.go` 的 `var version`；打 tag（`git tag vX.Y.Z && git push origin vX.Y.Z`）
   触发 `.github/workflows` 构建六平台二进制并发布。
@@ -175,7 +207,7 @@ hmck upgrade npm-token
 - 不要往仓库里写公司内部信息（真实 registry 域名、项目 id、用户名、token）。
   示例统一用 `git.example.com`、`123`、`alice` 这种假值。
 
-## 7. 常见问题
+## 8. 常见问题
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
@@ -188,3 +220,7 @@ hmck upgrade npm-token
 | `rotate` 报 403 / 提示 `self_rotate` | token 缺 `api`、`self_rotate` scope，或实例低于 16.10；去 GitLab 建个带 `api` 的 PAT |
 | `rotate` 报 token 已失效或过期 | 死 token 不能自我轮换，只能让用户手工建新的，再 `set-token` |
 | 换完别的机器 npm 也 401 了 | 旧 token 已作废，且复用检测可能连带撤销家族；在那台机器上重新 `set-token` 或 `rotate` |
+| `refresh` 打出「跳过 …」并退出 2 | 那组换不了（npmjs / JWT / 缺 scope / `${VAR}`），只跳过它，其它组照换；不想看到就 `--host` 指定一组 |
+| `auto on` 提示缺 `api` / `self_rotate` | 建 PAT 时 scopes 勾选 `api`（或 GitLab 16.10+ 的 `self_rotate`），`set-token` 写入后重新 `auto on` |
+| 自动换新配置在哪，想删掉 | macOS `~/Library/Application Support/npm-token/config.json`，Linux `~/.config/npm-token/config.json`；`npm-token auto off` 等同于关掉，文件里没有 token |
+| 定时任务怎么写 | `npm-token refresh`（开关开着就按保存的文件和阈值走），能配 `--json` 便于看结果 |

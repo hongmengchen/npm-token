@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.6.0"
+var version = "0.7.0"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -40,6 +40,8 @@ func run(args []string) int {
 		return runRotate(args, 0)
 	case "refresh":
 		return runRotate(args, 30)
+	case "auto":
+		return runAuto(args)
 	case "skill":
 		return runSkill(args)
 	case "upgrade":
@@ -69,15 +71,20 @@ func usage(w io.Writer) {
   npm-token rotate [--file PATH] [--host HOST | --project ID]
                    [--expires-at YYYY-MM-DD | --days N] [--dry-run] [--json] [--no-verify]
   npm-token refresh [--if-days N] [同上]   token 快到期时自动换新（默认 30 天内）
+  npm-token auto on|off|status [--file PATH] [--if-days N] [--json]
+                                           自动换新开关：开启时先确认每组 token 都换得了；
+                                           refresh、TUI 启动都按保存的阈值走
   npm-token skill [--dir DIR] [--print]   把 agent skill 装到 ~/.claude/skills
   npm-token upgrade [--check] [--force]   升级自身（--check 只看版本）
   npm-token version
   npm-token help
 
 TUI:
-  ↑↓ 选 token，enter 换新值，R 让 GitLab 自动换新（先出确认页），e 看 .npmrc
-  所有条目，r 重新检查，q 退出。粘贴后回车确认，写入前自动备份，写完联网复验；
-  新 token 被拒会自动还原。标题栏显示当前版本；有新版时按 U 直接升级。
+  ↑↓ 选 token，enter 换新值，R 让 GitLab 自动换新（先出确认页），a 开关自动换新，
+  e 看 .npmrc 所有条目，r 重新检查，q 退出。粘贴后回车确认，写入前自动备份，
+  写完联网复验；新 token 被拒会自动还原。开关打开后，启动时 token 若已进到
+  阈值内会直接换新（不再确认，旧 token 立刻作废）。标题栏显示当前版本；
+  有新版时按 U 直接升级。
 
 check:
   读出 .npmrc 里所有 //host/path/:_authToken 条目，按 token 分组，尽量联网问出
@@ -106,6 +113,16 @@ rotate / refresh:
   --dry-run     只打印换新计划，不改文件（仍要联网确认 token 状态）
   --no-verify   换完不联网复验
   refresh 只在剩余天数 <= --if-days（默认 30）时才换；永不过期或还早的直接退出 0
+
+auto:
+  自动换新开关，状态存在本机配置里（不是 .npmrc，也不含 token）。
+  auto on       先逐组确认能自我轮换（GitLab PAT、未失效、带 api 或 self_rotate
+                scope、条目是 _authToken 字面值）；有一组不行就拒绝并列出原因和
+                建 token 时该勾什么；都行才写开关，--if-days 设阈值（默认 30）
+  auto off      关掉开关，.npmrc 和 token 都不动
+  auto status   看开关、阈值、配置文件位置，以及每组 token 现在能不能换
+  开关打开后：TUI 启动时若 token 已进阈值就自动换一组；refresh 用保存的
+  --if-days 和文件，文件里有多组时逐组都看，换不了的那组跳过并提示。
 
 退出码:
   0  全部有效 / 换新成功 / 不需要换
@@ -392,6 +409,20 @@ func runRotate(args []string, defaultIfDays int) int {
 		return 2
 	}
 
+	// refresh 没显式给 --file / --if-days 时，用开关保存的值，定时任务才能照常跑
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if defaultIfDays > 0 {
+		if s, err := loadAutoSettings(); err == nil && s.AutoRefresh {
+			if !explicit["if-days"] {
+				ifDays = clampIfDays(s.IfDays)
+			}
+			if !explicit["file"] && s.File != "" {
+				file = s.File
+			}
+		}
+	}
+
 	path, err := resolvePath(file)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "找不到家目录: "+err.Error())
@@ -407,57 +438,84 @@ func runRotate(args []string, defaultIfDays int) int {
 		return 2
 	}
 
-	sel, err := selectTargets(f.Auth, host, project, false)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	groups := groupByToken(sel)
-	if len(groups) != 1 {
-		var b strings.Builder
-		fmt.Fprintf(&b, "匹配到 %d 组 token，一次只换一组，请用 --host / --project 挑一组：\n", len(groups))
-		for _, g := range groups {
-			fmt.Fprintf(&b, "  %s  %s（%d 条）\n", maskToken(g.Entries[0].Value), strings.Join(uniqueHosts(g.Entries), ", "), len(g.Entries))
+	// refresh 不挑组：文件里每组都看一眼，能换且到期的才换，换不了的跳过；
+	// rotate 保持一次一组，必须用 --host / --project 指定。
+	sweep := defaultIfDays > 0 && host == "" && project == ""
+	var groups []tokenGroup
+	if sweep {
+		groups = groupByToken(f.Auth)
+	} else {
+		sel, err := selectTargets(f.Auth, host, project, false)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 2
 		}
-		fmt.Fprintln(os.Stderr, strings.TrimRight(b.String(), "\n"))
-		return 2
-	}
-
-	plan, err := buildRotationPlan(groups[0].Entries, checkToken(groups[0].Entries), expiresAt, days)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-
-	if ifDays > 0 {
-		noChange := ""
-		if plan.Old.ExpiresAt == "" {
-			noChange = plan.Old.Masked + " 永不过期，不用刷新"
-		} else if left, ok := daysLeft(plan.Old.ExpiresAt); ok && left > ifDays {
-			noChange = fmt.Sprintf("%s 还剩 %d 天，超过 %d 天的刷新线，这次不换", plan.Old.Masked, left, ifDays)
-		}
-		if noChange != "" {
-			if asJSON {
-				return writeRotateJSON(rotateJSON{File: path, Host: plan.Host, Token: plan.Old.Masked,
-					ExpiresAt: plan.Old.ExpiresAt, NoChange: true}, 0)
+		groups = groupByToken(sel)
+		if len(groups) != 1 {
+			var b strings.Builder
+			fmt.Fprintf(&b, "匹配到 %d 组 token，一次只换一组，请用 --host / --project 挑一组：\n", len(groups))
+			for _, g := range groups {
+				fmt.Fprintf(&b, "  %s  %s（%d 条）\n", maskToken(g.Entries[0].Value), strings.Join(uniqueHosts(g.Entries), ", "), len(g.Entries))
 			}
-			fmt.Println(noChange)
-			return 0
+			fmt.Fprintln(os.Stderr, strings.TrimRight(b.String(), "\n"))
+			return 2
 		}
 	}
 
-	if dryRun {
-		if asJSON {
-			return writeRotateJSON(rotateJSON{File: path, Host: plan.Host, Token: plan.Old.Masked,
+	color := isTTY(os.Stdout)
+	var results []rotateJSON
+	code := 0
+	for _, g := range groups {
+		rep := checkToken(g.Entries)
+		plan, err := buildRotationPlan(g.Entries, rep, expiresAt, days)
+		if err != nil {
+			if !sweep {
+				fmt.Fprintln(os.Stderr, err.Error())
+				return 2
+			}
+			// 多组刷新：这组换不了就跳过（比如 npmjs token），别拖累别的组
+			if !asJSON {
+				fmt.Fprintf(os.Stderr, "跳过 %s：%s\n", rep.Masked, err.Error())
+			}
+			results = append(results, rotateJSON{File: path, Host: firstHost(g.Entries), Token: rep.Masked, Error: err.Error()})
+			code = 2
+			continue
+		}
+
+		if ifDays > 0 {
+			noChange := ""
+			if plan.Old.ExpiresAt == "" {
+				noChange = plan.Old.Masked + " 永不过期，不用刷新"
+			} else if left, ok := daysLeft(plan.Old.ExpiresAt); ok && left > ifDays {
+				noChange = fmt.Sprintf("%s 还剩 %d 天，超过 %d 天的刷新线，这次不换", plan.Old.Masked, left, ifDays)
+			}
+			if noChange != "" {
+				if !asJSON {
+					fmt.Println(noChange)
+				}
+				results = append(results, rotateJSON{File: path, Host: plan.Host, Token: plan.Old.Masked,
+					ExpiresAt: plan.Old.ExpiresAt, NoChange: true})
+				continue
+			}
+		}
+
+		if dryRun {
+			if !asJSON {
+				fmt.Print(renderRotatePlan(plan, path, color))
+			}
+			results = append(results, rotateJSON{File: path, Host: plan.Host, Token: plan.Old.Masked,
 				DryRun: true, ExpiresAt: plan.ExpiresAt, ExpiryNote: plan.ExpiryNote,
-				Updated: len(plan.Entries), Skipped: plan.Skipped}, 0)
+				Updated: len(plan.Entries), Skipped: plan.Skipped})
+			continue
 		}
-		fmt.Print(renderRotatePlan(plan, path, isTTY(os.Stdout)))
-		return 0
-	}
 
-	out := performRotation(path, plan, noVerify)
-	if asJSON {
+		out := performRotation(path, plan, noVerify)
+		if c := rotateExitCode(out); c > code {
+			code = c
+		}
+		if !asJSON {
+			fmt.Print(renderRotateResult(out, path, color))
+		}
 		v := rotateJSON{File: path, Host: out.Host, Token: plan.Old.Masked, Rotated: out.Rotated,
 			ExpiresAt: out.NewExpiry, Updated: out.Updated, Skipped: out.Skipped,
 			Backup: out.Backup, Recovery: out.Recovery}
@@ -468,10 +526,30 @@ func runRotate(args []string, defaultIfDays int) int {
 		if out.Err != nil {
 			v.Error = out.Err.Error()
 		}
-		return writeRotateJSON(v, rotateExitCode(out))
+		results = append(results, v)
 	}
-	fmt.Print(renderRotateResult(out, path, isTTY(os.Stdout)))
-	return rotateExitCode(out)
+
+	if asJSON {
+		if len(groups) == 1 {
+			return writeRotateJSON(results[0], code)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(struct {
+			File    string       `json:"file"`
+			Results []rotateJSON `json:"results"`
+		}{path, results}); err != nil {
+			return 2
+		}
+	}
+	return code
+}
+
+func firstHost(entries []authEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	return entries[0].Host
 }
 
 func writeRotateJSON(v rotateJSON, code int) int {

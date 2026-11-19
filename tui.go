@@ -69,6 +69,12 @@ type tuiModel struct {
 	configScroll int
 	rotatePlan   rotatePlan
 	rotateOut    rotateOutcome
+
+	// 自动换新开关（存在本机配置里，不含 token）
+	auto      autoSettings
+	autoOn    bool
+	autoErr   string
+	autoTried bool // 启动时只自动换一次，别每轮 reload 都换
 }
 
 type tuiLoadedMsg struct {
@@ -110,7 +116,85 @@ func newTuiModel(path string) tuiModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = styles.Accent
 
-	return tuiModel{path: path, state: tuiLoading, input: ti, spin: sp}
+	m := tuiModel{path: path, state: tuiLoading, input: ti, spin: sp}
+	if s, err := loadAutoSettings(); err != nil {
+		m.autoErr = err.Error()
+	} else {
+		m.auto = s
+		m.autoOn = s.AutoRefresh
+	}
+	return m
+}
+
+// maybeAutoRotate 在列表第一次加载出来时看一眼开关：开着、管的是这个文件、
+// 有 token 进了阈值，就直接让 GitLab 换一组（只换一组，剩下的留给下次启动或定时 refresh）。
+func (m tuiModel) maybeAutoRotate() (tea.Model, tea.Cmd) {
+	if m.autoTried || !m.autoOn || m.autoErr != "" || len(m.items) == 0 {
+		return m, nil
+	}
+	if !m.auto.targets(m.path) {
+		return m, nil
+	}
+	m.autoTried = true
+	ifDays := clampIfDays(m.auto.IfDays)
+	for _, it := range m.items {
+		if autoDue(it, ifDays) == "" {
+			continue
+		}
+		plan, err := buildRotationPlan(it.Entries, it.Rep, "", 0)
+		if err != nil {
+			// 开关开着但这条换不了（比如 token 被改过）：说清楚，别悄悄跳过
+			m.note = "自动换新跳过 " + it.Rep.Masked + ": " + err.Error()
+			continue
+		}
+		m.rotatePlan = plan
+		m.state = tuiWorking
+		m.workText = "自动换新 " + plan.Old.Masked + "…"
+		return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+			return tuiRotateDoneMsg{out: performRotation(m.path, plan, false)}
+		})
+	}
+	return m, nil
+}
+
+// toggleAuto 是 TUI 里的 `a`：开之前逐组确认能自我轮换，和 CLI 的 auto on 一致
+func (m tuiModel) toggleAuto() (tea.Model, tea.Cmd) {
+	if m.autoOn {
+		s := m.auto
+		s.AutoRefresh = false
+		if err := saveAutoSettings(s); err != nil {
+			m.note = "关闭自动换新失败: " + err.Error()
+			return m, nil
+		}
+		m.auto = s
+		m.autoOn = false
+		m.autoErr = ""
+		m.note = "自动换新已关闭"
+		return m, nil
+	}
+	if len(m.items) == 0 {
+		m.note = "没有可自动换新的 token"
+		return m, nil
+	}
+	if problems := checkRefreshable(m.items); len(problems) > 0 {
+		pr := problems[0]
+		m.note = fmt.Sprintf("不能开启自动换新：%s %s", pr.Item.Rep.Masked, pr.Reason)
+		if len(problems) > 1 {
+			m.note += fmt.Sprintf("（还有 %d 组不行，详见 npm-token auto on）", len(problems)-1)
+		}
+		return m, nil
+	}
+	ifDays := clampIfDays(m.auto.IfDays)
+	s := autoSettings{AutoRefresh: true, IfDays: ifDays, File: absPath(m.path)}
+	if err := saveAutoSettings(s); err != nil {
+		m.note = "开启自动换新失败: " + err.Error()
+		return m, nil
+	}
+	m.auto = s
+	m.autoOn = true
+	m.autoErr = ""
+	m.note = fmt.Sprintf("自动换新已开启：剩 %d 天以内时换", ifDays)
+	return m, nil
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -199,7 +283,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.note = ""
 		}
-		return m, nil
+		return m.maybeAutoRotate()
 
 	case versionCheckMsg:
 		if msg.err != nil {
@@ -288,6 +372,8 @@ func (m tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.note = ""
 				m.state = tuiRotateConfirm
 			}
+		case "a":
+			return m.toggleAuto()
 		case "r":
 			m.state = tuiLoading
 			m.note = ""
@@ -543,7 +629,7 @@ func (m tuiModel) viewList() string {
 	stats := styles.Dim.Render(fmt.Sprintf("%s · %d 个 token · %d 条配置", displayPath(m.path), len(m.items), len(m.config)))
 	b.WriteString(m.withLogo(
 		styles.Title.Render("npm-token")+styles.Dim.Render("  v"+version+"  .npmrc 里的 registry token"),
-		stats+m.updateStatus(),
+		stats+m.autoStatus()+m.updateStatus(),
 	))
 	b.WriteString("\n")
 
@@ -560,13 +646,27 @@ func (m tuiModel) viewList() string {
 	}
 
 	b.WriteString("\n")
-	hints := []string{"↑↓", "选择", "enter", "换 token", "R", "自动换新", "e", "看条目", "r", "检查"}
+	hints := []string{"↑↓", "选择", "enter", "换 token", "R", "现在换新", "a", "自动开关", "e", "看条目", "r", "检查"}
 	if m.canUpdate() {
 		hints = append(hints, "U", "升级")
 	}
 	hints = append(hints, "q", "退出")
 	b.WriteString(tuiHints(hints...))
 	return b.String()
+}
+
+// autoStatus 在标题行里显示自动换新开关的状态
+func (m tuiModel) autoStatus() string {
+	switch {
+	case m.autoErr != "":
+		return styles.Warn.Render("  ·  自动开关读不了")
+	case m.autoOn && !m.auto.targets(m.path):
+		return styles.Dim.Render("  ·  自动换新管的是 " + displayPath(m.auto.File))
+	case m.autoOn:
+		return styles.Good.Render(fmt.Sprintf("  ·  自动换新开（≤%d 天）", clampIfDays(m.auto.IfDays)))
+	default:
+		return styles.Dim.Render("  ·  自动换新关")
+	}
 }
 
 // updateStatus 显示当前版本之外的一小段状态：检查中 / 已是最新 / 可升级 / 已升级

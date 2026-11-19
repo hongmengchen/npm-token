@@ -68,6 +68,12 @@ func buildRotationPlan(entries []authEntry, rep tokenReport, expiresAt string, d
 	}
 	plan.Entries = literal
 
+	// scopes 已知但不够时提前说清楚，省得真调接口才 403；
+	// 没拿到 scopes 时放行，由 rotate 接口的 403 兜底（提示同样的做法）
+	if rep.Kind == "gitlab-pat" && !hasRotationScope(rep.Scopes) {
+		return plan, errors.New(missingScopeHint)
+	}
+
 	exp, note, err := planExpiry(rep, expiresAt, days)
 	if err != nil {
 		return plan, err
