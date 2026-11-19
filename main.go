@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -36,6 +36,10 @@ func run(args []string) int {
 		return runTUI(args)
 	case "set-token", "set":
 		return runSetToken(args)
+	case "rotate":
+		return runRotate(args, 0)
+	case "refresh":
+		return runRotate(args, 30)
 	case "skill":
 		return runSkill(args)
 	case "upgrade":
@@ -62,15 +66,18 @@ func usage(w io.Writer) {
   npm-token check [--file PATH] [--json] [--no-color]
   npm-token set-token [--file PATH] [--host HOST | --project ID | --all]
                       [--token TOKEN | -] [--force] [--no-verify]
+  npm-token rotate [--file PATH] [--host HOST | --project ID]
+                   [--expires-at YYYY-MM-DD | --days N] [--dry-run] [--json] [--no-verify]
+  npm-token refresh [--if-days N] [同上]   token 快到期时自动换新（默认 30 天内）
   npm-token skill [--dir DIR] [--print]   把 agent skill 装到 ~/.claude/skills
   npm-token upgrade [--check] [--force]   升级自身（--check 只看版本）
   npm-token version
   npm-token help
 
 TUI:
-  ↑↓ 选 token，enter 换新值，r 重新检查，q 退出。粘贴后回车确认，
-  写入前自动备份，写完联网复验；新 token 被拒会自动还原。
-  标题栏显示当前版本；有新版时按 U 直接升级（升级完重开生效）。
+  ↑↓ 选 token，enter 换新值，R 让 GitLab 自动换新（先出确认页），e 看 .npmrc
+  所有条目，r 重新检查，q 退出。粘贴后回车确认，写入前自动备份，写完联网复验；
+  新 token 被拒会自动还原。标题栏显示当前版本；有新版时按 U 直接升级。
 
 check:
   读出 .npmrc 里所有 //host/path/:_authToken 条目，按 token 分组，尽量联网问出
@@ -87,10 +94,23 @@ set-token:
   --force   连 ${VAR} 这种环境变量引用也一起改成字面值（默认跳过并提示）
   --no-verify  写完不联网复验
 
+rotate / refresh:
+  用 token 自己调 GitLab 的 POST /personal_access_tokens/self/rotate 换一组新的
+  PAT（GitLab 16.10+），然后把 .npmrc 里同一串值的条目一起改掉、联网复验。
+  旧 token 换完立刻作废；别的机器、CI 里还留着同一串的话那边会一起断，而且
+  GitLab 发现旧 token 再被使用，会把同一家族的新 token 也撤销。
+  需要 token 带 api 或 self_rotate scope——现有 token 通常就够了，不用另给一个。
+  只有 GitLab PAT 能这样换：npmjs 的 token 要求交互式 2FA，JWT 由签发方续期。
+  --expires-at  新 token 的到期日；不给 --days 也不给这个时，沿用原 token 的有效期
+  --days        新 token 从今天起有效多少天
+  --dry-run     只打印换新计划，不改文件（仍要联网确认 token 状态）
+  --no-verify   换完不联网复验
+  refresh 只在剩余天数 <= --if-days（默认 30）时才换；永不过期或还早的直接退出 0
+
 退出码:
-  0  全部有效
-  1  有 token 失效或过期
-  2  用法错误 / 网络不通 / 没有条目，判断不了
+  0  全部有效 / 换新成功 / 不需要换
+  1  有 token 失效或过期；rotate 换完但新 token 被 GitLab 拒绝
+  2  用法错误 / 网络不通 / 没有条目 / 换新失败（旧 token 未被撤销）
 `, version)
 }
 
@@ -168,9 +188,10 @@ func runCheck(args []string) int {
 	code := worstCode(reports)
 	if asJSON {
 		out := struct {
-			File   string        `json:"file"`
-			Tokens []tokenReport `json:"tokens"`
-		}{path, reports}
+			File     string        `json:"file"`
+			Tokens   []tokenReport `json:"tokens"`
+			Settings []configLine  `json:"settings"`
+		}{path, reports, f.Settings()}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(out); err != nil {
@@ -317,6 +338,149 @@ func runSetToken(args []string) int {
 	// 问不出来（网络/服务异常）：保持写入，留备份备查
 	fmt.Fprintf(os.Stderr, "无法联网确认新 token。要还原：\n  cp '%s' '%s'\n", backup, path)
 	return 2
+}
+
+// ---------- rotate / refresh ----------
+
+type rotateJSON struct {
+	File       string       `json:"file"`
+	Host       string       `json:"host"`
+	Token      string       `json:"token"` // 旧 token，已打码
+	DryRun     bool         `json:"dry_run,omitempty"`
+	NoChange   bool         `json:"no_change,omitempty"`
+	Rotated    bool         `json:"rotated"`
+	ExpiresAt  string       `json:"expires_at,omitempty"`
+	ExpiryNote string       `json:"expiry_note,omitempty"`
+	Updated    int          `json:"updated"`
+	Skipped    int          `json:"skipped,omitempty"`
+	Backup     string       `json:"backup,omitempty"`
+	Recovery   string       `json:"recovery_file,omitempty"`
+	Verify     *tokenReport `json:"verify,omitempty"`
+	Error      string       `json:"error,omitempty"`
+}
+
+// runRotate 处理 rotate（defaultIfDays=0，总是换）和 refresh（快到期的才换）
+func runRotate(args []string, defaultIfDays int) int {
+	name := "rotate"
+	if defaultIfDays > 0 {
+		name = "refresh"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var file, host, project, expiresAt string
+	var days, ifDays int
+	var dryRun, asJSON, noVerify bool
+	fs.StringVar(&file, "file", "", "npmrc 路径（默认 ~/.npmrc）")
+	fs.StringVar(&host, "host", "", "只换该主机的 token")
+	fs.StringVar(&project, "project", "", "只换该 GitLab 项目 id 的 token")
+	fs.StringVar(&expiresAt, "expires-at", "", "新 token 的到期日 YYYY-MM-DD")
+	fs.IntVar(&days, "days", 0, "新 token 从今天起有效多少天")
+	fs.IntVar(&ifDays, "if-days", defaultIfDays, "还剩多少天以内才换（0 = 总是换）")
+	fs.BoolVar(&dryRun, "dry-run", false, "只打印计划，不真换")
+	fs.BoolVar(&asJSON, "json", false, "输出 JSON")
+	fs.BoolVar(&noVerify, "no-verify", false, "换完不联网复验")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, "参数不对: "+err.Error())
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "多余的参数: %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+	if expiresAt != "" && days > 0 {
+		fmt.Fprintln(os.Stderr, "--expires-at 和 --days 只能给一个")
+		return 2
+	}
+
+	path, err := resolvePath(file)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "找不到家目录: "+err.Error())
+		return 2
+	}
+	f, err := parseNpmrc(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读不了 %s: %v\n", path, err)
+		return 2
+	}
+	if len(f.Auth) == 0 {
+		fmt.Fprintf(os.Stderr, "%s 里没有 //host/:_authToken 条目，没法换\n", path)
+		return 2
+	}
+
+	sel, err := selectTargets(f.Auth, host, project, false)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 2
+	}
+	groups := groupByToken(sel)
+	if len(groups) != 1 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "匹配到 %d 组 token，一次只换一组，请用 --host / --project 挑一组：\n", len(groups))
+		for _, g := range groups {
+			fmt.Fprintf(&b, "  %s  %s（%d 条）\n", maskToken(g.Entries[0].Value), strings.Join(uniqueHosts(g.Entries), ", "), len(g.Entries))
+		}
+		fmt.Fprintln(os.Stderr, strings.TrimRight(b.String(), "\n"))
+		return 2
+	}
+
+	plan, err := buildRotationPlan(groups[0].Entries, checkToken(groups[0].Entries), expiresAt, days)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 2
+	}
+
+	if ifDays > 0 {
+		noChange := ""
+		if plan.Old.ExpiresAt == "" {
+			noChange = plan.Old.Masked + " 永不过期，不用刷新"
+		} else if left, ok := daysLeft(plan.Old.ExpiresAt); ok && left > ifDays {
+			noChange = fmt.Sprintf("%s 还剩 %d 天，超过 %d 天的刷新线，这次不换", plan.Old.Masked, left, ifDays)
+		}
+		if noChange != "" {
+			if asJSON {
+				return writeRotateJSON(rotateJSON{File: path, Host: plan.Host, Token: plan.Old.Masked,
+					ExpiresAt: plan.Old.ExpiresAt, NoChange: true}, 0)
+			}
+			fmt.Println(noChange)
+			return 0
+		}
+	}
+
+	if dryRun {
+		if asJSON {
+			return writeRotateJSON(rotateJSON{File: path, Host: plan.Host, Token: plan.Old.Masked,
+				DryRun: true, ExpiresAt: plan.ExpiresAt, ExpiryNote: plan.ExpiryNote,
+				Updated: len(plan.Entries), Skipped: plan.Skipped}, 0)
+		}
+		fmt.Print(renderRotatePlan(plan, path, isTTY(os.Stdout)))
+		return 0
+	}
+
+	out := performRotation(path, plan, noVerify)
+	if asJSON {
+		v := rotateJSON{File: path, Host: out.Host, Token: plan.Old.Masked, Rotated: out.Rotated,
+			ExpiresAt: out.NewExpiry, Updated: out.Updated, Skipped: out.Skipped,
+			Backup: out.Backup, Recovery: out.Recovery}
+		if out.Verify.Masked != "" {
+			vr := out.Verify
+			v.Verify = &vr
+		}
+		if out.Err != nil {
+			v.Error = out.Err.Error()
+		}
+		return writeRotateJSON(v, rotateExitCode(out))
+	}
+	fmt.Print(renderRotateResult(out, path, isTTY(os.Stdout)))
+	return rotateExitCode(out)
+}
+
+func writeRotateJSON(v rotateJSON, code int) int {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return 2
+	}
+	return code
 }
 
 func expiresSuffix(rep tokenReport) string {

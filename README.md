@@ -11,15 +11,15 @@
 
 ```
 $ npm-token
-┌───┐  npm-token  v0.5.0  .npmrc 里的 registry token
-│ N │  ~/.npmrc · 6 条认证 · 1 个 token  ·  已是最新
+┌───┐  npm-token  v0.6.0  .npmrc 里的 registry token
+│ N │  ~/.npmrc · 1 个 token · 3 条配置  ·  已是最新
 └───┘
 
 │ glpat-…coco   GitLab PAT   ✓ 有效
 │ git.example.com · 名称「ci」 · scopes: api · 最近使用 2026-11-18 14:56
 │ 2027-03-31 到期（剩 133 天） · 6 个条目全部可访问
 
-  ↑↓ 选择  ·  enter 换 token  ·  r 重新检查  ·  q 退出
+  ↑↓ 选择  ·  enter 换 token  ·  R 自动换新  ·  e 看条目  ·  r 检查  ·  q 退出
 ```
 
 ## 安装
@@ -81,17 +81,19 @@ JWT 本地解 `exp`，npmjs 的 token 才走 `/-/whoami`。不依赖 `npm`，也
 终端里直接运行 `npm-token` 会打开 TUI（管道 / CI 里则输出上面的纯文本；界面样式来自共享的 [tui](https://github.com/hongmengchen/tui) 主题库）：
 
 ```
-npm-token  v0.4.0  .npmrc 里的 registry token
-  ~/.npmrc · 6 条认证 · 1 个 token · 已是最新
+npm-token  v0.6.0  .npmrc 里的 registry token
+  ~/.npmrc · 1 个 token · 3 条配置 · 已是最新
 
 │ glpat-…coco   GitLab PAT   ✓ 有效
 │ git.example.com · scopes: api
 │ 2027-03-31 到期（剩 133 天） · 6 个条目全部可访问
 
-  ↑↓ 选择  ·  enter 换 token  ·  r 重新检查  ·  q 退出
+  ↑↓ 选择  ·  enter 换 token  ·  R 自动换新  ·  e 看条目  ·  r 检查  ·  q 退出
 ```
 
 在 TUI 里：`↑↓` 选一组 token → `enter` → 粘贴新值（`ctrl+y` 读剪贴板）→ 确认 → 自动备份、写入、联网复验；新值被拒会当场还原，列表跟着刷新。
+按 `R` 走另一条路：让 GitLab 自己换一个新 token，先出确认页，回车才动手。
+按 `e` 看 `.npmrc` 的全部 `key=value` 条目（带行号、可翻页，敏感值已打码）。
 
 标题栏始终显示当前版本，启动时会顺手查一下 GitHub 最新版。有新版本时状态行变成 `最新 0.4.1，按 U 升级`，按 `U` 就在界面里下载、校验 SHA-256 并原子替换自身，完成后提示重开生效——不用退出再去敲 `npm-token upgrade`。
 
@@ -104,6 +106,12 @@ npm-token check --file ./.npmrc    # 查别的文件
 npm-token tui --file ./.npmrc      # 指定文件进 TUI
 npm-token upgrade --check          # 只检查新版本
 npm-token upgrade                  # 升级自身
+
+# 让 GitLab 自己换一个新 token（旧 token 换完立刻失效）
+npm-token rotate --dry-run         # 先看计划
+npm-token rotate                   # 换，并沿用原 token 的有效期
+npm-token rotate --expires-at 2027-03-31
+npm-token refresh                  # 只剩 30 天以内才换，否则什么都不做
 
 # 换 token：从 stdin 读新值（推荐，避免留在 shell 历史里）
 echo '<新 token>' | npm-token set-token --host git.example.com
@@ -123,7 +131,36 @@ npm-token skill
 3. 写完**联网复验**：被明确拒绝（401/403）就**自动还原**，并给出原因；只是网络不通则保留写入并提示备份位置
 4. 值是 `${VAR}` 的条目默认跳过（改环境变量更合适），要硬改加 `--force`
 
-退出码：`0` 全部有效 · `1` 有失效或过期 · `2` 用法错误 / 网络不通 / 判断不了。
+退出码：`0` 全部有效 / 换新成功 / 不需要换 · `1` 有 token 失效或过期，或换完的新 token 被 GitLab 拒绝 · `2` 用法错误 / 网络不通 / 没有条目 / 换新失败（旧 token 未被撤销）。
+
+### 自动换新（rotate / refresh）
+
+GitLab 16.10 起支持 PAT 自我轮换。`npm-token rotate` 用**现有 token 自己**调
+`POST /api/v4/personal_access_tokens/self/rotate` 拿一个新的，再把 `.npmrc` 里同一串值的条目一起改掉、联网复验：
+
+```bash
+npm-token rotate --dry-run             # 只打印计划：换哪组、新的到期日、影响几条（会联网确认 token 状态，但不改文件）
+npm-token rotate                       # 真换
+npm-token rotate --days 180            # 指定新 token 从今天起有效 180 天
+npm-token refresh                      # 剩 30 天以内才换（--if-days 改阈值）
+```
+
+- **不用额外提供特权 token**：需要 `api` 或 `self_rotate` scope，GitLab 用的 PAT 通常已经带 `api`。只有 `read_api` 之类不够时才会 403，输出里会直说。
+- **不传到期参数时沿用原 token 的有效期**（按 `created_at` → `expires_at` 推算）；原 token 永不过期就也不设到期日。不显式传 `expires_at` 的话，要求强制到期的实例会把新 token 默认成一周。
+- **旧 token 在换完那一刻立刻作废，不能回滚。** 别的机器、CI 变量里如果还留着同一串值，那边会一起断；而且 GitLab 有复用检测——旧 token 再被使用会撤销同一家族的所有 token，包括刚换的新 token。换之前先把这些地方清掉。
+- 只有 GitLab PAT 能这样换：npmjs 的 token 要求交互式 2FA，工具没法在后台刷新；JWT 由签发方续期。
+- 换新后新值先写进同目录的 `.npm-token-recovery-*`（0600），再改 `.npmrc`；复验通过自动删除，没通过会留在那儿并告诉你路径——旧 token 已经死了，这时要么修网络，要么手动把恢复文件里的值写进去。
+- `--json` 输出只有掩码，永远不带新 token；脚本可以用 `--no-verify` 跳过复验（离线时），退出码含义不变。
+
+### 看 `.npmrc` 里的其它条目
+
+除了 token 行，`.npmrc` 还有 registry 映射、`//host/:username`、`strict-ssl` 之类。这些都会列出来：
+
+- `npm-token check` 末尾的 `其它配置`：带行号，一眼看全；
+- `npm-token check --json` 的 `settings` 字段：`line / key / value / kind / scope / secret`；
+- TUI 里按 `e`：整份文件的 `key=value`，带行号、可翻页。
+
+看起来像秘密的键（`_authToken`、`_password`、带 `token`/`secret`/`apikey` 的自定义键）解析时就打码；值写成 `${VAR}` 的原样显示——那本身没有秘密。
 
 ## 支持的 token 类型
 
@@ -139,8 +176,9 @@ npm-token skill
 ## 安全
 
 - `check` 纯只读，不发写请求
-- 输出只露头尾（`glpat-…coco`），JSON 里也没有明文（`"token"` 字段是掩码）
-- 备份文件 0600，写在同目录，方便随时 `cp` 回去
+- 输出只露头尾（`glpat-…coco`），JSON 里也没有明文（`"token"` 字段是掩码）；`rotate --json` 同样不含新 token
+- `.npmrc` 条目视图里敏感值在解析阶段就打码，渲染层拿不到明文
+- 备份文件和换新用的恢复文件都是 0600，写在同目录，方便随时 `cp` 回去
 - 安装和自更新都会校验 release 的 `checksums.txt`（SHA-256）
 
 ## 更新

@@ -7,7 +7,8 @@ description: 检查并更新 ~/.npmrc 里的 registry token（GitLab / npmjs 私
 
 `npm-token` 是这台机器上的 TUI 程序（也能当纯 CLI 用，TUI 标题栏会显示版本、有新版可按 `U` 升级）：读出 `.npmrc` 里所有
 `//host/path/:_authToken=...` 条目，按 token 分组检查是否有效、什么时候过期，换新值时
-先备份、原子写入、写完联网复验，新值被明确拒绝就自动还原。
+先备份、原子写入、写完联网复验，新值被明确拒绝就自动还原。GitLab PAT 还能让 GitLab
+自己轮换出新值（`rotate` / `refresh`）。除 token 行外，文件里所有 `key=value` 也能列出来看。
 
 **agent 一律走 CLI，不要启动 TUI。** TUI 需要真终端（选条目、粘贴 token），非 TTY 里跑不起来。
 
@@ -35,15 +36,26 @@ npm-token check --json     # 给脚本/agent 解析
   "file": "~/.npmrc",
   "tokens": [
     {
-      "masked": "glpat-…a1b2",
+      "token": "glpat-…a1b2",
       "kind": "gitlab-pat",
       "valid": true,
-      "expires_in": "剩 498 天",
-      "entries": [{"host": "git.example.com", "project": "123", "path": "~/.npmrc:3"}]
+      "scopes": ["api"],
+      "created_at": "2026-03-31T08:00:00Z",
+      "expires_in": "2027-03-31 到期（剩 498 天）",
+      "hosts": ["git.example.com"],
+      "entries": [
+        {"file": "~/.npmrc", "registry": "https://git.example.com/api/v4/projects/123/packages/npm/", "project_id": "123", "access": "ok", "note": "项目 #123"}
+      ]
     }
+  ],
+  "settings": [
+    {"line": 1, "key": "registry", "value": "https://registry.npmjs.org/", "kind": "registry"},
+    {"line": 3, "key": "//git.example.com/:username", "value": "alice", "kind": "setting"}
   ]
 }
 ```
+
+`settings` 是除认证行之外的所有 `key=value`（带行号）；敏感键的值已经是掩码，`${VAR}` 原样保留。
 
 - GitLab PAT（`glpat-`）查 `/api/v4/personal_access_tokens/self`；GitLab 会把 `/-/whoami`
   302 掉，所以 `npm whoami` / `npm token list` 对 GitLab 源不可用，本工具是另一种路子。
@@ -78,9 +90,9 @@ npm-token set-token --project 123 --token "$NEW_TOKEN"
 
 | 码 | 含义 | 处理 |
 | --- | --- | --- |
-| `0` | 写入并复验通过（`set-token`）/ 全部有效（`check`） | 报结果 |
-| `1` | 有 token 失效或过期（`check`） | 看输出，建议换新值 |
-| `2` | 用法错误、网络不通、没有条目；写入被拒时会自动还原 | 看 stderr |
+| `0` | 写入并复验通过（`set-token`）/ 全部有效（`check`）/ 换新成功或不需要换（`rotate`） | 报结果 |
+| `1` | 有 token 失效或过期（`check`）；rotate 换完但新 token 被 GitLab 拒绝 | 看输出，建议换新值 / 看恢复文件 |
+| `2` | 用法错误、网络不通、没有条目；写入被拒时会自动还原；rotate 失败（旧 token 未被撤销） | 看 stderr |
 
 成功时 stdout 形如：
 
@@ -97,7 +109,37 @@ npm-token set-token --project 123 --token "$NEW_TOKEN"
 - 被明确拒绝（401/403）会自动还原备份；网络异常则保留写入，并给出还原命令。
 - 想验证 GitLab 项目权限，用新 token 请求项目 API，不要靠 `npm whoami`。
 
-## 3. 安装与升级
+## 3. 让 GitLab 自己换新（rotate / refresh）
+
+用户手里没有新 token、但旧 token 还没失效且快到期时，可以让 GitLab 自己轮换：
+
+```bash
+npm-token rotate --dry-run      # 先看计划：换哪组、新到期日、影响几条
+npm-token rotate                # 换，并沿用原 token 的有效期
+npm-token refresh               # 剩 30 天以内才换（--if-days 改阈值），否则退出 0
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `--host HOST` / `--project ID` | 文件里有多组 token 时指定换哪一组 |
+| `--expires-at YYYY-MM-DD` | 新 token 的到期日 |
+| `--days N` | 新 token 从今天起有效 N 天（和 `--expires-at` 只能二选一） |
+| `--if-days N` | 剩余天数超过 N 就不换（`refresh` 默认 30） |
+| `--dry-run` | 只打印计划，不改文件（仍要联网确认 token 状态） |
+| `--no-verify` | 换完不联网复验（离线时） |
+| `--json` | 输出 JSON（只有掩码，不含新 token） |
+
+要点，转告用户时一条都别省：
+
+- **需要 `api` 或 `self_rotate` scope**，现有 PAT 一般就够，不用另给特权 token；不够会 403 并在输出里说明。
+- **换完旧 token 立刻作废，不能回滚。** 别的机器、CI 变量里还有同一串值的话那边会一起断。
+- **GitLab 有复用检测**：旧 token 再被使用会撤销同一家族的所有 token，包括刚换的新 token。换之前提醒用户清理别处。
+- 不给 `--expires-at` / `--days` 时沿用原 token 的有效期；原 token 永不过期就不设到期。
+- 新值先写进同目录 `.npm-token-recovery-*`（0600），复验通过才删；失败时输出会给出恢复文件路径，**不要自作主张删它**，也不要回滚到已死的旧 token。
+- npmjs token 不能这样刷新（接口要求交互式 2FA，`bypass_2fa` token 被禁）；JWT 由签发方续期。
+- 退出码：`0` 换成功 / 不需要换；`1` 换完但新 token 被 GitLab 拒绝；`2` 换新失败（旧 token 未被撤销，文件没动）。
+
+## 4. 安装与升级
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hongmengchen/npm-token/main/install.sh | sh
@@ -119,12 +161,12 @@ hmck install npm-token
 hmck upgrade npm-token
 ```
 
-## 4. agent 自己的 skill 文件
+## 5. agent 自己的 skill 文件
 
 `npm-token skill` 会把本文件写到 `~/.claude/skills/npm-token/SKILL.md`，内容跟程序版本一致；
 升级 npm-token 时 hmck 会带着刷新。`npm-token skill --print` 只打印不写文件。
 
-## 5. 在本仓库里改代码时
+## 6. 在本仓库里改代码时
 
 - 版本号在 `main.go` 的 `var version`；打 tag（`git tag vX.Y.Z && git push origin vX.Y.Z`）
   触发 `.github/workflows` 构建六平台二进制并发布。
@@ -133,7 +175,7 @@ hmck upgrade npm-token
 - 不要往仓库里写公司内部信息（真实 registry 域名、项目 id、用户名、token）。
   示例统一用 `git.example.com`、`123`、`alice` 这种假值。
 
-## 6. 常见问题
+## 7. 常见问题
 
 | 现象 | 原因 / 处理 |
 | --- | --- |
@@ -143,3 +185,6 @@ hmck upgrade npm-token
 | `跳过 …（值来自环境变量 …）` | 默认不动 `${VAR}` 条目；要硬改加 `--force` |
 | `复验不通过` 后看到 `已还原` | 新 token 无效，原文件已经恢复，换个 token 再来 |
 | `npm whoami` 对 GitLab 报 E401 | GitLab 不认这个接口，正常；用 `npm-token check` |
+| `rotate` 报 403 / 提示 `self_rotate` | token 缺 `api`、`self_rotate` scope，或实例低于 16.10；去 GitLab 建个带 `api` 的 PAT |
+| `rotate` 报 token 已失效或过期 | 死 token 不能自我轮换，只能让用户手工建新的，再 `set-token` |
+| 换完别的机器 npm 也 401 了 | 旧 token 已作废，且复用检测可能连带撤销家族；在那台机器上重新 `set-token` 或 `rotate` |

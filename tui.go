@@ -23,6 +23,9 @@ const (
 	tuiConfirm
 	tuiWorking
 	tuiResult
+	tuiConfig // .npmrc 全部条目
+	tuiRotateConfirm
+	tuiRotateResult
 )
 
 type tokenItem struct {
@@ -31,9 +34,10 @@ type tokenItem struct {
 }
 
 type tuiModel struct {
-	path  string
-	items []tokenItem
-	state tuiState
+	path   string
+	items  []tokenItem
+	config []configLine
+	state  tuiState
 
 	cursor        int
 	width, height int
@@ -60,13 +64,21 @@ type tuiModel struct {
 	resultOK bool
 	wrote    bool
 	restored bool
+
+	// 条目浏览与自动换新
+	configScroll int
+	rotatePlan   rotatePlan
+	rotateOut    rotateOutcome
 }
 
 type tuiLoadedMsg struct {
-	path  string
-	items []tokenItem
-	err   error
+	path   string
+	items  []tokenItem
+	config []configLine
+	err    error
 }
+
+type tuiRotateDoneMsg struct{ out rotateOutcome }
 
 type tuiApplyDoneMsg struct {
 	backup   string
@@ -139,24 +151,21 @@ func selfUpdateCmd() tea.Cmd {
 
 func tuiLoadCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		items, err := loadTokenItems(path)
-		return tuiLoadedMsg{path: path, items: items, err: err}
+		items, config, err := loadTokenItems(path)
+		return tuiLoadedMsg{path: path, items: items, config: config, err: err}
 	}
 }
 
-func loadTokenItems(path string) ([]tokenItem, error) {
+func loadTokenItems(path string) ([]tokenItem, []configLine, error) {
 	f, err := parseNpmrc(path)
 	if err != nil {
-		return nil, err
-	}
-	if len(f.Auth) == 0 {
-		return nil, errNoAuthEntries
+		return nil, nil, err
 	}
 	var items []tokenItem
 	for _, g := range groupByToken(f.Auth) {
 		items = append(items, tokenItem{Entries: g.Entries, Rep: checkToken(g.Entries)})
 	}
-	return items, nil
+	return items, f.Config, nil
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -182,6 +191,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiLoadedMsg:
 		m.path = msg.path
 		m.items = msg.items
+		m.config = msg.config
 		m.state = tuiList
 		m.clampCursor()
 		if msg.err != nil {
@@ -229,6 +239,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.failed = ""
 		}
 		return m, nil
+
+	case tuiRotateDoneMsg:
+		m.rotateOut = msg.out
+		m.state = tuiRotateResult
+		return m, nil
 	}
 
 	return m, nil
@@ -257,6 +272,21 @@ func (m tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.note = ""
 				m.state = tuiInput
 				return m, textinput.Blink
+			}
+		case "e":
+			m.configScroll = 0
+			m.state = tuiConfig
+		case "R":
+			if len(m.items) > 0 {
+				it := m.items[m.cursor]
+				plan, err := buildRotationPlan(it.Entries, it.Rep, "", 0)
+				if err != nil {
+					m.note = err.Error()
+					return m, nil
+				}
+				m.rotatePlan = plan
+				m.note = ""
+				m.state = tuiRotateConfirm
 			}
 		case "r":
 			m.state = tuiLoading
@@ -325,6 +355,47 @@ func (m tuiModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.spin.Tick, tuiLoadCmd(m.path))
 		}
 		return m, tea.Batch(m.spin.Tick, tuiLoadCmd(m.path))
+
+	case tuiConfig:
+		page := m.configPageSize()
+		switch k.String() {
+		case "up", "k":
+			m.configScroll--
+		case "down", "j":
+			m.configScroll++
+		case "pgup":
+			m.configScroll -= page
+		case "pgdown", " ":
+			m.configScroll += page
+		case "home", "g":
+			m.configScroll = 0
+		case "end", "G":
+			m.configScroll = len(m.config) - page
+		case "esc", "q", "enter", "e":
+			m.state = tuiList
+			return m, nil
+		}
+		m.clampConfigScroll(page)
+		return m, nil
+
+	case tuiRotateConfirm:
+		switch k.String() {
+		case "esc", "q":
+			m.state = tuiList
+			return m, nil
+		case "enter":
+			plan, path := m.rotatePlan, m.path
+			m.state = tuiWorking
+			m.workText = "正在让 GitLab 换新 " + plan.Old.Masked + "…"
+			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+				return tuiRotateDoneMsg{out: performRotation(path, plan, false)}
+			})
+		}
+
+	case tuiRotateResult:
+		m.state = tuiLoading
+		m.note = ""
+		return m, tea.Batch(m.spin.Tick, tuiLoadCmd(m.path))
 	}
 	return m, nil
 }
@@ -389,6 +460,31 @@ func (m *tuiModel) clampCursor() {
 	}
 }
 
+// configPageSize 是一屏能摆下的条目行数（标题和底部提示占掉几行）
+func (m tuiModel) configPageSize() int {
+	n := m.height - 9
+	if n < 5 {
+		n = 12 // 还没拿到窗口大小时给个合理默认
+	}
+	if n > 30 {
+		n = 30
+	}
+	return n
+}
+
+func (m *tuiModel) clampConfigScroll(page int) {
+	max := len(m.config) - page
+	if max < 0 {
+		max = 0
+	}
+	if m.configScroll > max {
+		m.configScroll = max
+	}
+	if m.configScroll < 0 {
+		m.configScroll = 0
+	}
+}
+
 // ---------- 渲染 ----------
 
 func (m tuiModel) View() string {
@@ -406,6 +502,12 @@ func (m tuiModel) View() string {
 		body = m.viewWorking()
 	case tuiResult:
 		body = m.viewResult()
+	case tuiConfig:
+		body = m.viewConfig()
+	case tuiRotateConfirm:
+		body = m.viewRotateConfirm()
+	case tuiRotateResult:
+		body = m.viewRotateResult()
 	}
 	return "\n" + body + "\n"
 }
@@ -438,11 +540,7 @@ func (m tuiModel) withLogo(lines ...string) string {
 func (m tuiModel) viewList() string {
 	var b strings.Builder
 
-	authCount := 0
-	for _, it := range m.items {
-		authCount += len(it.Entries)
-	}
-	stats := styles.Dim.Render(fmt.Sprintf("%s · %d 条认证 · %d 个 token", displayPath(m.path), authCount, len(m.items)))
+	stats := styles.Dim.Render(fmt.Sprintf("%s · %d 个 token · %d 条配置", displayPath(m.path), len(m.items), len(m.config)))
 	b.WriteString(m.withLogo(
 		styles.Title.Render("npm-token")+styles.Dim.Render("  v"+version+"  .npmrc 里的 registry token"),
 		stats+m.updateStatus(),
@@ -462,7 +560,7 @@ func (m tuiModel) viewList() string {
 	}
 
 	b.WriteString("\n")
-	hints := []string{"↑↓", "选择", "enter", "换 token", "r", "重新检查"}
+	hints := []string{"↑↓", "选择", "enter", "换 token", "R", "自动换新", "e", "看条目", "r", "检查"}
 	if m.canUpdate() {
 		hints = append(hints, "U", "升级")
 	}
@@ -614,6 +712,141 @@ func (m tuiModel) viewResult() string {
 		b.WriteString("  " + styles.Label.Render(label) + style.Render(firstNonEmpty(m.verify.ExpiresIn, m.verify.Error, "状态未知")) + "\n")
 		if m.backup != "" {
 			b.WriteString("\n  " + styles.Dim.Render("要还原: cp "+displayPath(m.backup)+" "+displayPath(m.path)) + "\n")
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(tuiHints("任意键", "返回列表"))
+	return b.String()
+}
+
+func (m tuiModel) viewConfig() string {
+	page := m.configPageSize()
+	start := m.configScroll
+	if start > len(m.config)-page {
+		start = len(m.config) - page
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + page
+	if end > len(m.config) {
+		end = len(m.config)
+	}
+
+	var b strings.Builder
+	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  .npmrc 条目  "+displayPath(m.path)))
+	b.WriteString("\n\n")
+	b.WriteString("  " + styles.Dim.Render(fmt.Sprintf("%d 条配置，敏感值已打码", len(m.config))) + "\n")
+	if len(m.config) == 0 {
+		b.WriteString("  " + styles.Dim.Render("文件里没有 key=value 条目") + "\n")
+	}
+	w := m.contentWidth()
+	for _, c := range m.config[start:end] {
+		valStyle := styles.Text
+		switch {
+		case c.Secret:
+			valStyle = styles.Dim
+		case c.Kind == "registry":
+			valStyle = styles.Accent
+		}
+		line := styles.Dim.Render(fmt.Sprintf("%4d", c.LineNo)) + "  " +
+			styles.Text.Render(c.Key) + styles.Dim.Render(" = ") + valStyle.Render(c.Value)
+		b.WriteString("  " + theme.Truncate(line, w) + "\n")
+	}
+	b.WriteString("\n")
+	if len(m.config) > page {
+		b.WriteString(tuiHints("↑↓", "滚动", "pgup/pgdn", "翻页", "esc", "返回") +
+			styles.Dim.Render(fmt.Sprintf("   %d–%d / %d", start+1, end, len(m.config))) + "\n")
+	} else {
+		b.WriteString(tuiHints("esc", "返回") + "\n")
+	}
+	return b.String()
+}
+
+func (m tuiModel) viewRotateConfirm() string {
+	plan := m.rotatePlan
+	var b strings.Builder
+	b.WriteString(styles.Title.Render("npm-token") + styles.Dim.Render("  GitLab token 自动换新"))
+	b.WriteString("\n\n")
+	b.WriteString("  " + styles.Label.Render("文件") + styles.Text.Render(displayPath(m.path)) + "\n")
+	b.WriteString("  " + styles.Label.Render("主机") + styles.Text.Render(plan.Host) + "\n")
+	b.WriteString("  " + styles.Label.Render("旧") + styles.Dim.Render(plan.Old.Masked) + "   " +
+		styles.Dim.Render(kindLabel(plan.Old.Kind)) + "   " + styles.Good.Render("✓ 有效") + "\n")
+	scope := fmt.Sprintf("%d 条认证配置", len(plan.Entries))
+	if plan.Skipped > 0 {
+		scope += fmt.Sprintf("，跳过 %d 条环境变量", plan.Skipped)
+	}
+	b.WriteString("  " + styles.Label.Render("范围") + styles.Text.Render(scope) + "\n")
+	exp := plan.ExpiresAt
+	if exp == "" {
+		exp = "不设"
+	}
+	b.WriteString("  " + styles.Label.Render("新到期") + styles.Text.Render(exp) +
+		styles.Dim.Render("（"+plan.ExpiryNote+"）") + "\n")
+	b.WriteString("\n")
+	b.WriteString("  " + styles.Warn.Render("! 换完旧 token 立刻失效") + "\n")
+	b.WriteString("  " + styles.Dim.Render("别的机器、CI 变量里还用着同一串的话，那边会一起断；") + "\n")
+	b.WriteString("  " + styles.Dim.Render("GitLab 发现旧 token 再被使用，会把同一家族的新 token 也撤销") + "\n")
+	b.WriteString("\n")
+	b.WriteString(tuiHints("enter", "开始换新", "esc", "返回"))
+	return b.String()
+}
+
+func (m tuiModel) viewRotateResult() string {
+	out := m.rotateOut
+	var head string
+	switch {
+	case out.Err == nil:
+		head = styles.Good.Render("✓ 已换新 token")
+	case !out.Rotated:
+		head = styles.Bad.Render("✗ 换新失败，什么都没改")
+	default:
+		head = styles.Warn.Render("! 新 token 已生效，但收尾没走完")
+	}
+
+	var b strings.Builder
+	b.WriteString(styles.Title.Render("npm-token") + "  " + head)
+	b.WriteString("\n\n")
+	b.WriteString("  " + styles.Label.Render("文件") + styles.Text.Render(displayPath(m.path)) + "\n")
+	if out.Host != "" {
+		b.WriteString("  " + styles.Label.Render("主机") + styles.Text.Render(out.Host) + "\n")
+	}
+	if out.Rotated {
+		exp := out.NewExpiry
+		if exp == "" {
+			exp = "不设"
+		}
+		b.WriteString("  " + styles.Label.Render("新到期") + styles.Text.Render(exp) + "\n")
+	}
+	if out.Updated > 0 {
+		line := fmt.Sprintf("%d 条", out.Updated)
+		if out.Skipped > 0 {
+			line += fmt.Sprintf("，跳过 %d 条环境变量", out.Skipped)
+		}
+		b.WriteString("  " + styles.Label.Render("更新") + styles.Text.Render(line) + "\n")
+	}
+	if out.Backup != "" {
+		b.WriteString("  " + styles.Label.Render("备份") + styles.Dim.Render(displayPath(out.Backup)) + "\n")
+	}
+	if out.Verify.Masked != "" {
+		label, style := "验证", styles.Good
+		if out.Verify.Valid == nil || !*out.Verify.Valid {
+			label, style = "验证", styles.Warn
+		}
+		b.WriteString("  " + styles.Label.Render(label) +
+			style.Render(firstNonEmpty(expiryLine(out.Verify), out.Verify.Error, "状态未知")) + "\n")
+	}
+	if out.Err != nil {
+		b.WriteString("  " + styles.Label.Render("问题") + styles.Bad.Render(out.Err.Error()) + "\n")
+	}
+	if out.Recovery != "" {
+		b.WriteString("  " + styles.Label.Render("恢复") + styles.Dim.Render(displayPath(out.Recovery)) + "\n")
+	}
+	if out.Rotated && out.Err != nil {
+		b.WriteString("\n")
+		b.WriteString("  " + styles.Warn.Render("旧 token 已经被 GitLab 撤销，不能回滚") + "\n")
+		if out.Recovery != "" {
+			b.WriteString("  " + styles.Dim.Render("新 token 同时写在 .npmrc 和恢复文件里，确认无误后可以删掉恢复文件") + "\n")
 		}
 	}
 	b.WriteString("\n")

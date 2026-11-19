@@ -34,6 +34,8 @@ type tokenReport struct {
 	EnvName   string        `json:"env,omitempty"`
 	Valid     *bool         `json:"valid,omitempty"`
 	Revoked   bool          `json:"revoked,omitempty"`
+	Scopes    []string      `json:"scopes,omitempty"`
+	CreatedAt string        `json:"created_at,omitempty"`
 	ExpiresAt string        `json:"expires_at,omitempty"`
 	ExpiresIn string        `json:"expires_in,omitempty"`
 	Expired   bool          `json:"expired,omitempty"`
@@ -160,6 +162,7 @@ func checkGitLabToken(rep *tokenReport, host, token string) {
 			Scopes     []string `json:"scopes"`
 			Active     bool     `json:"active"`
 			Revoked    bool     `json:"revoked"`
+			CreatedAt  string   `json:"created_at"`
 			ExpiresAt  *string  `json:"expires_at"`
 			LastUsedAt string   `json:"last_used_at"`
 		}
@@ -169,6 +172,8 @@ func checkGitLabToken(rep *tokenReport, host, token string) {
 		}
 		rep.Valid = boolPtr(info.Active && !info.Revoked)
 		rep.Revoked = info.Revoked
+		rep.Scopes = info.Scopes
+		rep.CreatedAt = info.CreatedAt
 		if info.Name != "" {
 			rep.Details = append(rep.Details, "名称「"+info.Name+"」")
 		}
@@ -273,6 +278,9 @@ func httpJSON(method, url, header, value string, payload []byte) (body []byte, c
 	req.Header.Set(header, value)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "npm-token/"+version)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	client := &http.Client{Timeout: httpTimeout}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -31,11 +31,71 @@ type registryLine struct {
 	LineNo int
 }
 
+// configLine 是 .npmrc 里的一行 key=value，给「查看条目」用。
+// 敏感值（token / password 之类）在解析时就打码，后面谁渲染都不会漏。
+type configLine struct {
+	LineNo int    `json:"line"` // 1 起
+	Key    string `json:"key"`
+	Value  string `json:"value"`           // 已打码
+	Kind   string `json:"kind"`            // registry / auth / setting
+	Scope  string `json:"scope,omitempty"` // @scope:registry 的 scope
+	Secret bool   `json:"secret,omitempty"`
+}
+
 type npmrcFile struct {
 	Path       string
 	Lines      []string
 	Auth       []authEntry
 	Registries []registryLine
+	Config     []configLine
+}
+
+// Settings 是除认证行之外的配置（registry 映射、strict-ssl 之类）
+func (f *npmrcFile) Settings() []configLine {
+	out := make([]configLine, 0, len(f.Config))
+	for _, c := range f.Config {
+		if c.Kind != "auth" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// isSecretKey 判断一行配置的值要不要打码。`//host/:username` 不算，
+// 但 `_password`、`_authToken`、带 token/secret 的自定义键都算。
+func isSecretKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, s := range []string{"_authtoken", "_auth", "_password", "_pass", "password", "token", "secret", "apikey", "api_key", "api-key"} {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// displaySetting 把值变成能安全打印的样子；`${VAR}` 本身没暴露秘密，原样留着
+func displaySetting(v string) (shown string, secret bool) {
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
+		return v, false
+	}
+	return maskToken(strings.Trim(v, `"'`)), true
+}
+
+func (f *npmrcFile) addConfig(lineNo int, key, val, kind, scope string) {
+	shown := strings.TrimSpace(strings.Trim(val, `"'`))
+	secret := false
+	if isSecretKey(key) {
+		shown, secret = displaySetting(val)
+	}
+	f.Config = append(f.Config, configLine{
+		LineNo: lineNo + 1,
+		Key:    key,
+		Value:  shown,
+		Kind:   kind,
+		Scope:  scope,
+		Secret: secret,
+	})
 }
 
 // defaultNpmrcPath 是用户级 .npmrc
@@ -68,13 +128,20 @@ func parseNpmrc(path string) (*npmrcFile, error) {
 		switch {
 		case key == "registry":
 			f.Registries = append(f.Registries, registryLine{URL: strings.TrimSpace(strings.Trim(val, `"'`)), LineNo: i})
+			f.addConfig(i, key, val, "registry", "")
 		case strings.HasPrefix(key, "@") && strings.HasSuffix(key, ":registry"):
 			scope := strings.TrimSuffix(strings.TrimPrefix(key, "@"), ":registry")
 			f.Registries = append(f.Registries, registryLine{Scope: scope, URL: strings.TrimSpace(strings.Trim(val, `"'`)), LineNo: i})
+			f.addConfig(i, key, val, "registry", scope)
 		case strings.HasPrefix(key, "//") && strings.Contains(key, ":"):
 			idx := strings.LastIndex(key, ":")
 			prefix, param := key[:idx], key[idx+1:]
-			if param != "_authToken" && param != "_auth" {
+			kind := "setting"
+			if param == "_authToken" || param == "_auth" {
+				kind = "auth"
+			}
+			f.addConfig(i, key, val, kind, "")
+			if kind == "setting" {
 				continue // username / email / password 之类，跟 token 状态无关
 			}
 			if !strings.HasSuffix(prefix, "/") {
@@ -93,6 +160,8 @@ func parseNpmrc(path string) (*npmrcFile, error) {
 				Value:     value,
 				EnvName:   env,
 			})
+		default:
+			f.addConfig(i, key, val, "setting", "")
 		}
 	}
 	return f, nil

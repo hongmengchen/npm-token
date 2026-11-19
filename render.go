@@ -35,11 +35,12 @@ func renderCheck(path string, f *npmrcFile, reports []tokenReport, color bool) s
 	p := painter{on: color}
 	var b strings.Builder
 
+	settings := f.Settings()
 	fmt.Fprintf(&b, "%s\n", p.bold(displayPath(path)))
-	fmt.Fprintf(&b, "%s\n\n", p.dim(fmt.Sprintf("%d 条认证配置 · %d 个 token · %d 个 registry 映射",
-		len(f.Auth), len(reports), len(f.Registries))))
+	fmt.Fprintf(&b, "%s\n\n", p.dim(fmt.Sprintf("%d 条认证配置 · %d 个 token · %d 条其它配置",
+		len(f.Auth), len(reports), len(settings))))
 
-	needNew := false
+	needNew, canRefresh := false, false
 	for i, r := range reports {
 		if i > 0 {
 			b.WriteString("\n")
@@ -48,12 +49,31 @@ func renderCheck(path string, f *npmrcFile, reports []tokenReport, color bool) s
 		if r.Valid == nil || !*r.Valid || r.Expired {
 			needNew = true
 		}
+		if r.Kind == "gitlab-pat" && r.Valid != nil && *r.Valid && strings.Contains(r.ExpiresIn, "该换了") {
+			canRefresh = true
+		}
 	}
 
 	if needNew {
 		b.WriteString("\n")
 		b.WriteString(p.yellow("换 token：") + "GitLab 头像 → Preferences → Access tokens → Add new token（勾 api，设好到期日）\n")
 		b.WriteString("            然后 echo '<新 token>' | npm-token set-token --host <主机名>\n")
+	}
+	if canRefresh {
+		b.WriteString("\n")
+		b.WriteString(p.yellow("快到期的 token 可以让 GitLab 自己换：") + "npm-token refresh --dry-run 看计划，去掉 --dry-run 就换\n")
+	}
+
+	if len(settings) > 0 {
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "%s %s\n", p.dim("其它配置"), p.dim("（认证行见上面的条目；完整原文含行号：tui 里按 e）"))
+		for _, c := range settings {
+			val := c.Value
+			if c.Secret {
+				val = p.dim(val)
+			}
+			fmt.Fprintf(&b, "   %s  %s = %s\n", p.dim(fmt.Sprintf("%4d", c.LineNo)), c.Key, val)
+		}
 	}
 	return b.String()
 }
